@@ -1,0 +1,92 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a31e13a..f8dd7b3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -92,8 +92,10 @@ install(EXPORT KF6ConfigTargets DESTINATION "${CMAKECONFIG_INSTALL_DIR}"
+         FILE KF6ConfigTargets.cmake NAMESPACE KF6:: COMPONENT Devel)
+ 
+ 
++if(NOT IOS)
+ install(EXPORT KF6ConfigCompilerTargets DESTINATION "${KDE_INSTALL_CMAKEPACKAGEDIR}/KF6Config"
+         FILE KF6ConfigCompilerTargets.cmake NAMESPACE KF6:: COMPONENT Devel)
++endif()
+ 
+ install(FILES ${kconfig_version_header}
+         DESTINATION ${KDE_INSTALL_INCLUDEDIR_KF}/KConfig COMPONENT Devel)
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index ab5ddc8..2e8e630 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -5,9 +5,11 @@ endif()
+ if(KCONFIG_USE_QML)
+     add_subdirectory(qml)
+ endif()
+-add_subdirectory(kconfig_compiler)
+-add_subdirectory(kconf_update)
+-add_subdirectory(kreadconfig)
++if(NOT IOS)
++    add_subdirectory(kconfig_compiler)
++    add_subdirectory(kconf_update)
++    add_subdirectory(kreadconfig)
++endif()
+ 
+ ecm_qt_install_logging_categories(
+     EXPORT KCONFIG
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index aebaa47..19df312 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -50,11 +50,14 @@ ecm_generate_export_header(KF6ConfigCore
+     EXCLUDE_DEPRECATED_BEFORE_AND_AT ${EXCLUDE_DEPRECATED_BEFORE_AND_AT}
+ )
+ 
++if(NOT IOS)
+ target_compile_definitions(KF6ConfigCore
+     PRIVATE
+         KCONF_UPDATE_INSTALL_LOCATION="${KDE_INSTALL_FULL_LIBEXECDIR_KF}/$<TARGET_FILE_NAME:KF6::kconf_update>"
+ )
+ 
++endif()
++
+ target_include_directories(KF6ConfigCore
+     INTERFACE "$<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR_KF}/KConfig;${KDE_INSTALL_INCLUDEDIR_KF}/KConfigCore>"
+ )
+diff --git a/src/core/kconfig.cpp b/src/core/kconfig.cpp
+index 7618ea8..daceff6 100644
+--- a/src/core/kconfig.cpp
++++ b/src/core/kconfig.cpp
+@@ -533,6 +533,7 @@ bool KConfig::isDirty() const
+ 
+ void KConfig::checkUpdate(const QString &id, const QString &updateFile)
+ {
++#if QT_CONFIG(process)
+     const KConfigGroup cg(this, QStringLiteral("$Version"));
+     const QString cfg_id = updateFile + QLatin1Char(':') + id;
+     const QStringList ids = cg.readEntry("update_info", QStringList());
+@@ -540,6 +541,11 @@ void KConfig::checkUpdate(const QString &id, const QString &updateFile)
+         QProcess::execute(QStringLiteral(KCONF_UPDATE_INSTALL_LOCATION), QStringList{QStringLiteral("--check"), updateFile});
+         reparseConfiguration();
+     }
++#else
++    Q_UNUSED(id);
++    Q_UNUSED(updateFile);
++    qWarning("KConfig: external configuration migration is unavailable on this platform");
++#endif
+ }
+ 
+ KConfig *KConfig::copyTo(const QString &file, KConfig *config) const
+@@ -957,10 +963,14 @@ bool KConfig::isConfigWritable(bool warnUser)
+ 
+         // Note: We don't ask the user if we should not ask this question again because we can't save the answer.
+         errorMsg += QCoreApplication::translate("KConfig", "Please contact your system administrator.");
++#if QT_CONFIG(process)
+         QString cmdToExec = QStandardPaths::findExecutable(QStringLiteral("kdialog"));
+         if (!cmdToExec.isEmpty()) {
+             QProcess::execute(cmdToExec, QStringList{QStringLiteral("--title"), QCoreApplication::applicationName(), QStringLiteral("--msgbox"), errorMsg});
+         }
++#else
++        qWarning("%s", qPrintable(errorMsg));
++#endif
+     }
+ 
+     d->configState = allWritable ? ReadWrite : ReadOnly; // update the read/write status

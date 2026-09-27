@@ -1,0 +1,40 @@
+# Local sources, toolchains and build outputs
+/.qt/
+/.venv/
+/.build/
+/upstream/
+/.deps/
+/logs/
+
+# Editor, automation and per-machine state
+/.codex/
+/.agents/
+.idea/
+.vscode/
+xcuserdata/
+*.xcuserstate
+.env
+.env.*
+!.env.example
+
+# Python and macOS caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+.DS_Store
+
+# Device reports, signed applications and credentials
+*.app/
+*.ipa
+*.dSYM/
+*.ips
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.crt
+*.xcarchive/

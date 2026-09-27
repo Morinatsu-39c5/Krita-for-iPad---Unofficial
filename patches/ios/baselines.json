@@ -1,0 +1,40 @@
+{
+  "krita": {
+    "repository": "https://github.com/KDE/krita.git",
+    "revision": "3a9b5ef03f8312b6f630fc5d475e1692598e8719"
+  },
+  "patchedDependencies": {
+    "gsl": {
+      "repository": "https://github.com/ampl/gsl.git",
+      "revision": "fb0cfbc82b5e9e4d22444efce9241924f4aefb83"
+    },
+    "ki18n": {
+      "repository": "https://github.com/KDE/ki18n.git",
+      "revision": "32c3811dd8360dca9ae17cc0d72a6d437d6e583f"
+    },
+    "lager": {
+      "repository": "https://github.com/dimula73/lager.git",
+      "revision": "0b6ab3e0e880bc36be5da4984d768fde03b7cf19"
+    },
+    "lcms2": {
+      "repository": "https://github.com/mm2/Little-CMS.git",
+      "revision": "b76633e60c8387a77268fb3359277ca25b5fd75c"
+    },
+    "unibreak": {
+      "repository": "https://github.com/adah1972/libunibreak.git",
+      "revision": "3ce4bfa3129ff3738046a44a6db533d2ce25af2b"
+    },
+    "kconfig": {
+      "repository": "https://github.com/KDE/kconfig.git",
+      "revision": "4a6b3e56cd9f74598d9209a9d7ad0834d5e38b9d"
+    },
+    "kguiaddons": {
+      "repository": "https://github.com/KDE/kguiaddons.git",
+      "revision": "719d16f877f1a5ea7c9806eebf275bff130e7182"
+    },
+    "kwidgetsaddons": {
+      "repository": "https://github.com/KDE/kwidgetsaddons.git",
+      "revision": "a755cffa7f629abee2d9ba9cd19ac0c035a6e69f"
+    }
+  }
+}

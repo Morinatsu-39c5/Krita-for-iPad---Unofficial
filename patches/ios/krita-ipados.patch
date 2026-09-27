@@ -1,0 +1,3621 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1f436c9..a936fb1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -84,7 +84,7 @@ endif()
+ 
+ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+ 
+-if (APPLE)
++if (APPLE AND NOT IOS)
+     add_subdirectory(packaging/macos)
+ 
+     if(NOT CMAKE_GENERATOR MATCHES "Xcode")
+@@ -113,7 +113,7 @@ if (APPLE)
+ endif()
+ 
+ function(macos_test_fixrpath)
+-    if (APPLE AND BUILD_TESTING)
++    if (APPLE AND NOT IOS AND BUILD_TESTING)
+     foreach(TEST IN LISTS ARGN)
+         set_property(TARGET ${TEST}
+                      PROPERTY BUILD_RPATH "@loader_path/../../../../lib;@loader_path/../lib;@loader_path/../Frameworks;${CMAKE_INSTALL_PREFIX}/${KDE_INSTALL_LIBDIR}")
+@@ -342,6 +342,10 @@ option(BUILD_KRITA_QT_DESIGNER_PLUGINS "Build Qt Designer plugins for Krita widg
+ add_feature_info("Build Qt Designer plugins" BUILD_KRITA_QT_DESIGNER_PLUGINS "Builds Qt Designer plugins for Krita widgets (use -DBUILD_KRITA_QT_DESIGNER_PLUGINS=ON to enable).")
+ 
+ option(ENABLE_UPDATERS "Enable updaters/update notifications" ON)
++if(IOS)
++    # Self-signed iPad apps are replaced through Xcode, not desktop updaters.
++    set(ENABLE_UPDATERS OFF)
++endif()
+ configure_file(config-updaters.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-updaters.h)
+ add_feature_info("Enable updaters" ENABLE_UPDATERS "Enable updaters/update notifications.")
+ 
+@@ -441,7 +445,13 @@ if(NOT WIN32)
+     endif()
+ endif()
+ 
+-if(WIN32)
++if(IOS)
++    # Python remains a host build tool, but Python development libraries and
++    # executable Python plugins are not part of the initial iOS application.
++    set(CMAKE_DISABLE_FIND_PACKAGE_SIP TRUE)
++    set(CMAKE_DISABLE_FIND_PACKAGE_PyQt5 TRUE)
++    set(CMAKE_DISABLE_FIND_PACKAGE_PyQt6 TRUE)
++elseif(WIN32)
+     set(Python_FIND_STRATEGY LOCATION)
+     find_package(Python 3.8 COMPONENTS Development Interpreter)
+     if (Python_FOUND)
+@@ -453,9 +463,9 @@ if(WIN32)
+             message(FATAL_ERROR "Compiling with Python library failed, please check whether the architecture is correct!\nCMakeError.log:\n  ${ERROR_LOG}\n\n")
+         endif (NOT CAN_USE_PYTHON_LIBS)
+     endif (Python_FOUND)
+-else(WIN32)
++else()
+     find_package(PythonLibrary 3.8)
+-endif(WIN32)
++endif()
+ 
+  ########################
+ #########################
+@@ -637,8 +647,36 @@ configure_file(config-use-surface-color-management-api.h.cmake ${CMAKE_CURRENT_B
+ #
+ # Check for the presence of custom patches in Qt
+ #
++if(IOS)
++    # These checks only inspect declarations and compile-time patches. Linking
++    # the static Qt targets exports their object-library resources into the
++    # Xcode try_compile project, where CMake cannot resolve those targets.
++    if(DEFINED CMAKE_TRY_COMPILE_TARGET_TYPE)
++        set(_krita_saved_try_compile_target_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
++        set(_krita_had_try_compile_target_type TRUE)
++    endif()
++    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
++    set(_krita_ios_qt_private_includes ${Qt6Gui_INCLUDE_DIRS} ${Qt6Core_INCLUDE_DIRS})
++    foreach(_qt_include IN LISTS Qt6Gui_INCLUDE_DIRS)
++        if(_qt_include MATCHES "/QtGui\\.framework/Headers$")
++            list(APPEND _krita_ios_qt_private_includes
++                "${_qt_include}/${Qt6Gui_VERSION}"
++                "${_qt_include}/${Qt6Gui_VERSION}/QtGui")
++        endif()
++    endforeach()
++    foreach(_qt_include IN LISTS Qt6Core_INCLUDE_DIRS)
++        if(_qt_include MATCHES "/QtCore\\.framework/Headers$")
++            list(APPEND _krita_ios_qt_private_includes
++                "${_qt_include}/${Qt6Core_VERSION}"
++                "${_qt_include}/${Qt6Core_VERSION}/QtCore")
++        endif()
++    endforeach()
++    list(REMOVE_DUPLICATES _krita_ios_qt_private_includes)
++endif()
+ set(CMAKE_REQUIRED_INCLUDES ${Qt${QT_MAJOR_VERSION}Gui_INCLUDE_DIRS})
+-set(CMAKE_REQUIRED_LIBRARIES ${Qt${QT_MAJOR_VERSION}Gui_LIBRARIES})
++if(NOT IOS)
++    set(CMAKE_REQUIRED_LIBRARIES ${Qt${QT_MAJOR_VERSION}Gui_LIBRARIES})
++endif()
+ 
+ check_cxx_symbol_exists(QT_HAS_ENTER_LEAVE_PATCH "QtGui/qevent.h" KRITA_QT_HAS_ENTER_LEAVE_PATCH)
+ 
+@@ -657,8 +695,14 @@ if (QT_MAJOR_VERSION STREQUAL "5")
+     # in Qt5 we didn't have a separate definition for key-press/release patch
+     set(KRITA_QT_HAS_UPDATE_COMPRESSION_PATCH FALSE)
+ else()
+-    set(CMAKE_REQUIRED_INCLUDES ${Qt6Gui_INCLUDE_DIRS} ${Qt6Gui_PRIVATE_INCLUDE_DIRS})
+-    set(CMAKE_REQUIRED_LIBRARIES ${Qt6Gui_LIBRARIES})
++    if(IOS)
++        set(CMAKE_REQUIRED_INCLUDES ${_krita_ios_qt_private_includes})
++    else()
++        set(CMAKE_REQUIRED_INCLUDES ${Qt6Gui_INCLUDE_DIRS} ${Qt6Gui_PRIVATE_INCLUDE_DIRS})
++    endif()
++    if(NOT IOS)
++        set(CMAKE_REQUIRED_LIBRARIES ${Qt6Gui_LIBRARIES})
++    endif()
+ 
+     CHECK_CXX_SOURCE_COMPILES("
+ #include <QtGui/rhi/qrhi.h>
+@@ -841,8 +885,14 @@ KRITA_QT_HAS_ANDROID_INPUT_PLATFORM_DATA_SOFT_INPUT_ADJUST_NOTHING
+ )
+ 
+ 
+-set(CMAKE_REQUIRED_INCLUDES ${Qt${QT_MAJOR_VERSION}Gui_INCLUDE_DIRS} ${Qt${QT_MAJOR_VERSION}Gui_PRIVATE_INCLUDE_DIRS})
+-set(CMAKE_REQUIRED_LIBRARIES ${Qt${QT_MAJOR_VERSION}Gui_LIBRARIES})
++if(IOS)
++    set(CMAKE_REQUIRED_INCLUDES ${_krita_ios_qt_private_includes})
++else()
++    set(CMAKE_REQUIRED_INCLUDES ${Qt${QT_MAJOR_VERSION}Gui_INCLUDE_DIRS} ${Qt${QT_MAJOR_VERSION}Gui_PRIVATE_INCLUDE_DIRS})
++endif()
++if(NOT IOS)
++    set(CMAKE_REQUIRED_LIBRARIES ${Qt${QT_MAJOR_VERSION}Gui_LIBRARIES})
++endif()
+ 
+ CHECK_CXX_SOURCE_COMPILES("
+ #include <qpa/qplatformscreen.h>
+@@ -873,6 +923,16 @@ configure_file(config-qt-patches-present.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/con
+ 
+ unset(CMAKE_REQUIRED_INCLUDES)
+ unset(CMAKE_REQUIRED_LIBRARIES)
++if(IOS)
++    if(_krita_had_try_compile_target_type)
++        set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_krita_saved_try_compile_target_type}")
++    else()
++        unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
++    endif()
++    unset(_krita_had_try_compile_target_type)
++    unset(_krita_saved_try_compile_target_type)
++    unset(_krita_ios_qt_private_includes)
++endif()
+ 
+ 
+ include (MacroAddFileDependencies)
+@@ -1077,7 +1137,19 @@ macro(kis_add_library)
+     # the first run strips only options specific to kis_add_library
+     # to create arguments for real add_library call
+     cmake_parse_arguments(REAL "" PCH_FILE "" ${ARGV} )
++    if(IOS)
++        # iPadOS ships executable extensions inside the signed application.
++        list(FIND REAL_UNPARSED_ARGUMENTS MODULE _ios_module_index)
++        list(TRANSFORM REAL_UNPARSED_ARGUMENTS REPLACE "^(SHARED|MODULE)$" "STATIC")
++    endif()
+     add_library(${REAL_UNPARSED_ARGUMENTS})
++    if(IOS AND _ios_module_index GREATER -1)
++        list(GET REAL_UNPARSED_ARGUMENTS 0 _ios_plugin_target)
++        target_compile_definitions(${_ios_plugin_target} PRIVATE QT_STATICPLUGIN)
++        if(CMAKE_CURRENT_SOURCE_DIR MATCHES "/plugins/")
++            set_property(GLOBAL APPEND PROPERTY KRITA_IOS_PLUGIN_TARGETS ${_ios_plugin_target})
++        endif()
++    endif()
+ 
+     if (KRITA_ENABLE_PCH)
+         # the second run strips out all the option supported by the function
+@@ -1111,6 +1183,21 @@ macro(kis_add_library)
+     endif()
+ endmacro()
+ 
++function(krita_register_ios_static_resource resource_name sentinel qrc_file)
++    if(IOS)
++        if(IS_ABSOLUTE "${qrc_file}")
++            set(_qrc_path "${qrc_file}")
++        else()
++            set(_qrc_path "${CMAKE_CURRENT_SOURCE_DIR}/${qrc_file}")
++        endif()
++        if(NOT EXISTS "${_qrc_path}")
++            message(FATAL_ERROR "Registered iOS resource does not exist: ${_qrc_path}")
++        endif()
++        set_property(GLOBAL APPEND PROPERTY KRITA_IOS_STATIC_RESOURCES
++            "${resource_name}|${sentinel}|${_qrc_path}")
++    endif()
++endfunction()
++
+ # overcome some platform incompatibilities
+ if(WIN32)
+     if (MSVC)
+@@ -1253,7 +1340,11 @@ set_package_properties(TIFF PROPERTIES
+     URL "http://www.libtiff.org"
+     TYPE OPTIONAL
+     PURPOSE "Required by the Krita TIFF filter")
+-include(CheckLibTIFFPSDSupport)
++# TIFF is optional for the initial iOS feature set. The helper itself
++# requires TIFF and runs a target executable, so only invoke it when present.
++if(NOT IOS OR TIFF_FOUND)
++    include(CheckLibTIFFPSDSupport)
++endif()
+ configure_file(config-tiff.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-tiff.h)
+ 
+ find_package(JPEG)
+@@ -1712,7 +1803,7 @@ foreach(tst ${KRITA_BROKEN_TESTS})
+     message("    * ${tst}")
+ endforeach()
+ 
+-if(APPLE)
++if(APPLE AND NOT IOS)
+     # fix macos test rpath
+     macos_test_fixrpath(${KRITA_TESTS_TARGET})
+ endif()
+@@ -1764,3 +1855,9 @@ elseif(ANDROID)
+ endif()
+ 
+ ki18n_install(po)
++
++if(IOS AND TARGET krita)
++    # Building the app target directly (including Xcode Run) must also produce
++    # the catalogs consumed from krita.app/share/locale at runtime.
++    add_dependencies(krita pofiles tsfiles)
++endif()
+diff --git a/cmake/modules/FindLibExiv2.cmake b/cmake/modules/FindLibExiv2.cmake
+index 97fb777..1919d57 100644
+--- a/cmake/modules/FindLibExiv2.cmake
++++ b/cmake/modules/FindLibExiv2.cmake
+@@ -60,13 +60,13 @@ if(NOT LibExiv2_VERSION AND DEFINED LibExiv2_INCLUDE_DIRS)
+     foreach(_exiv2_version_file "version.hpp" "exv_conf.h")
+         if(EXISTS "${LibExiv2_INCLUDE_DIRS}/exiv2/${_exiv2_version_file}")
+             file(READ "${LibExiv2_INCLUDE_DIRS}/exiv2/${_exiv2_version_file}" _exiv_version_file_content)
+-            string(REGEX MATCH "#define EXIV2_MAJOR_VERSION[ ]+\\([0-9]+\\)" EXIV2_MAJOR_VERSION_MATCH ${_exiv_version_file_content})
+-            string(REGEX MATCH "#define EXIV2_MINOR_VERSION[ ]+\\([0-9]+\\)" EXIV2_MINOR_VERSION_MATCH ${_exiv_version_file_content})
+-            string(REGEX MATCH "#define EXIV2_PATCH_VERSION[ ]+\\([0-9]+\\)" EXIV2_PATCH_VERSION_MATCH ${_exiv_version_file_content})
++            string(REGEX MATCH "#define EXIV2_MAJOR_VERSION[ ]+\\([0-9]+U?\\)" EXIV2_MAJOR_VERSION_MATCH ${_exiv_version_file_content})
++            string(REGEX MATCH "#define EXIV2_MINOR_VERSION[ ]+\\([0-9]+U?\\)" EXIV2_MINOR_VERSION_MATCH ${_exiv_version_file_content})
++            string(REGEX MATCH "#define EXIV2_PATCH_VERSION[ ]+\\([0-9]+U?\\)" EXIV2_PATCH_VERSION_MATCH ${_exiv_version_file_content})
+             if(EXIV2_MAJOR_VERSION_MATCH)
+-                string(REGEX REPLACE ".*_MAJOR_VERSION[ ]+\\((.*)\\)" "\\1" EXIV2_MAJOR_VERSION ${EXIV2_MAJOR_VERSION_MATCH})
+-                string(REGEX REPLACE ".*_MINOR_VERSION[ ]+\\((.*)\\)" "\\1" EXIV2_MINOR_VERSION ${EXIV2_MINOR_VERSION_MATCH})
+-                string(REGEX REPLACE ".*_PATCH_VERSION[ ]+\\((.*)\\)" "\\1"  EXIV2_PATCH_VERSION  ${EXIV2_PATCH_VERSION_MATCH})
++                string(REGEX REPLACE ".*_MAJOR_VERSION[ ]+\\(([0-9]+)U?\\)" "\\1" EXIV2_MAJOR_VERSION ${EXIV2_MAJOR_VERSION_MATCH})
++                string(REGEX REPLACE ".*_MINOR_VERSION[ ]+\\(([0-9]+)U?\\)" "\\1" EXIV2_MINOR_VERSION ${EXIV2_MINOR_VERSION_MATCH})
++                string(REGEX REPLACE ".*_PATCH_VERSION[ ]+\\(([0-9]+)U?\\)" "\\1"  EXIV2_PATCH_VERSION  ${EXIV2_PATCH_VERSION_MATCH})
+             endif()
+         endif()
+     endforeach()
+diff --git a/cmake/modules/FindLibMyPaint.cmake b/cmake/modules/FindLibMyPaint.cmake
+index ba3c960..e2508e6 100644
+--- a/cmake/modules/FindLibMyPaint.cmake
++++ b/cmake/modules/FindLibMyPaint.cmake
+@@ -89,7 +89,7 @@ find_library(LibMyPaint_LIBRARY
+     HINTS ${MYPAINT_PKGCONF_LIBRARY_DIRS} ${MYPAINT_PKGCONF_LIBDIR}
+ )
+ 
+-if (NOT LibMyPaint_VERSION)
++if (NOT LibMyPaint_VERSION AND EXISTS "${LibMyPaint_INCLUDE_DIR}/config.h")
+     file(READ ${LibMyPaint_INCLUDE_DIR}/config.h _version_content)
+ 
+     string(REGEX MATCH "#define PACKAGE_VERSION[ \t]+\"(.+)\"" _version_match ${_version_content})
+diff --git a/krita/CMakeLists.txt b/krita/CMakeLists.txt
+index e47ec92..385cfab 100644
+--- a/krita/CMakeLists.txt
++++ b/krita/CMakeLists.txt
+@@ -13,10 +13,15 @@ endif()
+ 
+ set(krita_SRCS main.cc)
+ 
++if(IOS)
++    list(APPEND krita_SRCS krita_ios_touch_guard.mm krita_ios_pencil_bridge.cpp)
++    set_source_files_properties(krita_ios_touch_guard.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
++endif()
++
+ # Set the application icon on the application
+ if (NOT APPLE)
+ 	file(GLOB ICON_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/pics/branding/${BRANDING}/*-apps-krita.png")
+-else()
++elseif(APPLE AND NOT IOS)
+     # XCode below 26 cannot work with .icon format
+     if(${XCODE_VERSION} VERSION_GREATER_EQUAL "26.0")
+         find_program(XCRUN_EXECUTABLE NAMES xcrun)
+@@ -77,13 +82,13 @@ if (WIN32)
+             ${CMAKE_CURRENT_BINARY_DIR}/kritafile.ico
+         DESTINATION ${CMAKE_INSTALL_PREFIX}/installer
+     )
+-elseif(APPLE)
++elseif(APPLE AND NOT IOS)
+     if(${XCODE_VERSION} VERSION_GREATER_EQUAL "26.0")
+       set_source_files_properties(${ASSETS_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+     else()
+       ecm_add_app_icon(krita_SRCS OUTFILE_BASENAME krita ICONS ${ICON_SRCS})
+     endif()
+-else()
++elseif(NOT IOS)
+     ecm_add_app_icon(krita_SRCS ICONS ${ICON_SRCS})
+ endif()
+ 
+@@ -206,6 +211,8 @@ elseif (WIN32)
+     # Build the main implementation into a DLL to be called by a stub EXE.
+     kis_add_library(krita SHARED ${krita_SRCS})
+     set_target_properties(krita PROPERTIES PREFIX "")
++elseif(IOS)
++    qt_add_executable(krita MANUAL_FINALIZATION ${krita_SRCS})
+ else()
+     add_executable(krita ${krita_SRCS})
+ endif()
+@@ -224,7 +231,7 @@ if(HAVE_KCRASH)
+     target_link_libraries(krita PRIVATE KF${KF_MAJOR}::Crash)
+ endif()
+ 
+-if (APPLE)
++if (APPLE AND NOT IOS)
+     set(KRITA_VERSION_NUMBER_STRING "${KRITA_STABLE_VERSION_MAJOR}.${KRITA_STABLE_VERSION_MINOR}.${KRITA_VERSION_RELEASE}")
+     set_target_properties(krita PROPERTIES INSTALL_RPATH "@loader_path/../../../../lib;@loader_path/../lib;
+         @loader_path/../Frameworks;@executable_path/../../../../lib;@executable_path/../lib;@executable_path/../Frameworks")
+@@ -238,7 +245,7 @@ if (APPLE)
+     set_target_properties(krita PROPERTIES MACOSX_BUNDLE_COPYRIGHT "GNU Public License, V2 or, at your option, any later version.")
+ endif ()
+ 
+-if (NOT ANDROID)
++if (NOT ANDROID AND NOT IOS)
+   set(KRITAVERSION_SRCS kritaversion.cpp)
+   add_executable(krita_version ${KRITAVERSION_SRCS})
+   target_link_libraries(krita_version
+@@ -247,7 +254,7 @@ if (NOT ANDROID)
+         kritaversion
+   )
+ 
+-  if(APPLE)
++  if(APPLE AND NOT IOS)
+       set_target_properties(krita_version PROPERTIES INSTALL_RPATH "@loader_path/../Frameworks;@executable_path/../lib;@executable_path/../Frameworks")
+       set_property(TARGET krita_version PROPERTY MACOSX_BUNDLE OFF)
+   endif ()
+@@ -256,7 +263,7 @@ if (NOT ANDROID)
+ endif()
+ 
+ 
+-if(APPLE)
++if(APPLE AND NOT IOS)
+     set(KRITA_ASSET_KRZ_ICNS "krita-krz.icns" "krita-kra.icns")
+     add_custom_command(
+       OUTPUT ${KRITA_ASSET_KRZ_ICNS}
+@@ -276,6 +283,8 @@ if(APPLE)
+     target_sources(krita PRIVATE ${KRITA_ASSET_KRZ_ICNS})
+ 
+     install(TARGETS krita ${INSTALL_TARGETS_DEFAULT_ARGS} BUNDLE DESTINATION bin)
++elseif(IOS)
++    install(TARGETS krita BUNDLE DESTINATION .)
+ else()
+     install(TARGETS krita ${INSTALL_TARGETS_DEFAULT_ARGS})
+ endif()
+@@ -350,3 +359,8 @@ if (WIN32)
+     endif()
+     install(TARGETS krita_windows_stub_com ${INSTALL_TARGETS_DEFAULT_ARGS})
+ endif (WIN32)
++
++if(IOS)
++    include(${CMAKE_SOURCE_DIR}/packaging/ios/KritaIOS.cmake)
++    krita_configure_ios_bundle(krita)
++endif()
+diff --git a/krita/integration/CMakeLists.txt b/krita/integration/CMakeLists.txt
+index 09d5457..6e6b7c1 100644
+--- a/krita/integration/CMakeLists.txt
++++ b/krita/integration/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-if (APPLE)
++if (APPLE AND NOT IOS)
+ project(kritaintegration)
+ 
+ if (NOT MACOS_UNIVERSAL)
+@@ -18,4 +18,4 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/Build/UninstalledProducts/macosx/k
+ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/Build/UninstalledProducts/macosx/krita-thumbnailer.appex DESTINATION ${KDE_INSTALL_PLUGINDIR})
+ 
+ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/Build/UninstalledProducts/macosx/krita-preview.appex DESTINATION ${KDE_INSTALL_PLUGINDIR})
+-endif(APPLE)
++endif()
+diff --git a/krita/main.cc b/krita/main.cc
+index 9f252d7..2a26107 100644
+--- a/krita/main.cc
++++ b/krita/main.cc
+@@ -33,6 +33,13 @@
+ #include <QTranslator>
+ #include <QImageReader>
+ 
++#ifdef Q_OS_IOS
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QSaveFile>
++#include <locale.h>
++#endif
++
+ #include <kaboutdata.h>
+ 
+ #include <KisApplication.h>
+@@ -133,6 +140,19 @@ namespace
+ 
+ void installTranslators(KisApplication &app);
+ 
++#ifdef Q_OS_IOS
++void registerIosTranslationCatalogs(const QString &root)
++{
++    // KI18n caches catalogs on their first lookup, including failed lookups.
++    // iOS GenericDataLocation does not search the application bundle.
++    const QString localeDirectory = QDir(root + "share/locale").absolutePath();
++    for (const char *domain : {"krita", "ki18n6", "kcolorscheme6"}) {
++        KLocalizedString::addDomainLocaleDir(domain, localeDirectory);
++    }
++    KLocalizedString::setApplicationDomain("krita");
++}
++#endif
++
+ } // namespace
+ 
+ #ifdef Q_OS_WIN
+@@ -214,8 +234,20 @@ Java_org_krita_android_JNIWrappers_openFileFromIntent(JNIEnv* /*env*/,
+ #define MAIN_FN main
+ #endif
+ 
++#ifdef Q_OS_IOS
++bool kritaInitializeIosStaticResources();
++extern "C" void kritaInstallIosTouchGuard();
++#endif
++
+ extern "C" MAIN_EXPORT int MAIN_FN(int argc, char **argv)
+ {
++#ifdef Q_OS_IOS
++    kritaInstallIosTouchGuard();
++
++    if (!kritaInitializeIosStaticResources()) {
++        return 1;
++    }
++#endif
+ #ifdef Q_OS_ANDROID
+     KisAndroidUtils::performInitialSetup();
+ #endif
+@@ -377,6 +409,11 @@ extern "C" MAIN_EXPORT int MAIN_FN(int argc, char **argv)
+         QCoreApplication app(argc, argv);
+         Q_UNUSED(app);
+         root = KoResourcePaths::getApplicationRoot();
++#ifdef Q_OS_IOS
++        // Register before KisApplication and translator installation can look up
++        // any Krita strings and cache a missing catalog for the selected language.
++        registerIosTranslationCatalogs(root);
++#endif
+         QSettings languageoverride(configPath.absoluteFilePath("klanguageoverridesrc"), QSettings::IniFormat);
+         languageoverride.beginGroup("Language");
+         language = languageoverride.value(qAppName(), "").toString();
+@@ -655,6 +692,14 @@ if (!qEnvironmentVariableIsEmpty("KRITA_OPENGL_DEBUG")) {
+ 
+     // first create the application so we can create a pixmap
+     KisApplication app(key, argc, argv);
++#ifdef Q_OS_IOS
++    const QString iosFontConfig = QCoreApplication::applicationDirPath() + QStringLiteral("/etc/fonts");
++    qputenv("FONTCONFIG_PATH", QFile::encodeName(iosFontConfig));
++    qputenv("FONTCONFIG_FILE", QFile::encodeName(iosFontConfig + QStringLiteral("/fonts.conf")));
++    qputenv("XDG_CACHE_HOME", QFile::encodeName(QStandardPaths::writableLocation(QStandardPaths::CacheLocation)));
++    qputenv("XDG_DATA_HOME", QFile::encodeName(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)));
++#endif
++
+ 
+ #if defined Q_OS_WIN && QT_VERSION > QT_VERSION_CHECK(6, 0, 0)
+     const bool forceWinTab = !KisConfig::useWin8PointerInputNoApp(&kritarc);
+@@ -710,6 +755,40 @@ if (!qEnvironmentVariableIsEmpty("KRITA_OPENGL_DEBUG")) {
+ 
+     KLocalizedString::setApplicationDomain("krita");
+ 
++#ifdef Q_OS_IOS
++    // Opt-in device diagnostics exercise the same catalog lookup as the UI.
++    if (qEnvironmentVariableIsSet("KRITA_IOS_LOCALIZATION_DIAGNOSTICS")) {
++        QJsonObject report;
++        report.insert(QStringLiteral("languages"), KLocalizedString::languages().join(QLatin1Char(':')));
++        report.insert(QStringLiteral("catalogRoot"), QDir(root + "share/locale").absolutePath());
++        for (const char *variable : {"LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"}) {
++            report.insert(QString::fromLatin1(variable), QString::fromUtf8(qgetenv(variable)));
++        }
++        report.insert(QStringLiteral("messageLocale"), QString::fromLatin1(std::setlocale(LC_MESSAGES, nullptr)));
++        report.insert(QStringLiteral("performance"), i18n("Performance"));
++        report.insert(QStringLiteral("memoryLimit"), i18n("Memory Limit:"));
++        report.insert(QStringLiteral("fileMenu"), i18n("&File"));
++        QJsonObject samples;
++        for (const QString &sampleLanguage : {QStringLiteral("zh_CN"), QStringLiteral("zh_TW"), QStringLiteral("en_US")}) {
++            const QStringList sampleLanguages{sampleLanguage};
++            QJsonObject sample;
++            sample.insert(QStringLiteral("performance"), ki18n("Performance").withLanguages(sampleLanguages).toString());
++            sample.insert(QStringLiteral("memoryLimit"), ki18n("Memory Limit:").withLanguages(sampleLanguages).toString());
++            sample.insert(QStringLiteral("fileMenu"), ki18n("&File").withLanguages(sampleLanguages).toString());
++            samples.insert(sampleLanguage, sample);
++        }
++        report.insert(QStringLiteral("samples"), samples);
++        const QString directory = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
++        QDir().mkpath(directory);
++        QSaveFile diagnostic(directory + QStringLiteral("/ios-localization.json"));
++        if (diagnostic.open(QIODevice::WriteOnly)) {
++            diagnostic.write(QJsonDocument(report).toJson());
++            diagnostic.commit();
++        }
++        qInfo() << "iOS localization:" << QJsonDocument(report).toJson(QJsonDocument::Compact);
++    }
++#endif
++
+     dbgLocale << "Available translations" << KLocalizedString::availableApplicationTranslations();
+     dbgLocale << "Available domain translations" << KLocalizedString::availableDomainTranslations("krita");
+ 
+@@ -1014,6 +1093,9 @@ void installEcmTranslations(KisApplication &app)
+             QString subPath = QStringLiteral("locale/") % localeDirName % QStringLiteral("/LC_MESSAGES/") % catalog % QStringLiteral(".qm");
+ #if defined(Q_OS_ANDROID)
+             const QString fullPath = QStringLiteral("assets:/") + subPath;
++#elif defined(Q_OS_IOS)
++            const QString fullPath = QDir(KoResourcePaths::getApplicationRoot())
++                                             .filePath(QStringLiteral("share/") + subPath);
+ #else
+ #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+             const QString root = QLibraryInfo::location(QLibraryInfo::PrefixPath);
+diff --git a/libs/CMakeLists.txt b/libs/CMakeLists.txt
+index 5dcd5ec..d5c382a 100644
+--- a/libs/CMakeLists.txt
++++ b/libs/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ add_subdirectory( version )
+-if(APPLE)
++if(APPLE AND NOT IOS)
+     add_subdirectory( macosutils )
+ endif()
+ add_subdirectory( global )
+diff --git a/libs/global/CMakeLists.txt b/libs/global/CMakeLists.txt
+index 69ad8d5..9dd0222 100644
+--- a/libs/global/CMakeLists.txt
++++ b/libs/global/CMakeLists.txt
+@@ -110,7 +110,7 @@ if (ANDROID)
+     endif()
+ endif()
+ 
+-if(APPLE)
++if(APPLE AND NOT IOS)
+     target_link_libraries(kritaglobal PRIVATE
+         kritamacosutils
+     )
+diff --git a/libs/image/CMakeLists.txt b/libs/image/CMakeLists.txt
+index f7363e2..f1863ff 100644
+--- a/libs/image/CMakeLists.txt
++++ b/libs/image/CMakeLists.txt
+@@ -404,7 +404,7 @@ endif()
+ 
+ target_link_libraries(kritaimage PRIVATE ${FFTW3_LIBRARIES})
+ 
+-if(APPLE)
++if(APPLE AND NOT IOS)
+     target_link_libraries(kritaimage PRIVATE kritamacosutils)
+ endif()
+ 
+diff --git a/libs/koplugin/KoJsonTrader.cpp b/libs/koplugin/KoJsonTrader.cpp
+index c197f52..6c497dc 100644
+--- a/libs/koplugin/KoJsonTrader.cpp
++++ b/libs/koplugin/KoJsonTrader.cpp
+@@ -32,6 +32,9 @@ struct KoJsonTrader::PluginCacheEntry
+ 
+ KoJsonTrader::KoJsonTrader()
+ {
++#ifdef Q_OS_IOS
++    return; // Only signed, statically registered plugins are used on iPadOS.
++#endif
+     // Allow a command line variable KRITA_PLUGIN_PATH to override the automatic search
+     m_pluginPath = QProcessEnvironment::systemEnvironment().value("KRITA_PLUGIN_PATH");
+ 
+@@ -187,6 +190,21 @@ QList<KoJsonTrader::Plugin> KoJsonTrader::query(const QString &servicetype, cons
+     QMutexLocker l(&m_mutex);
+ 
+     QList<Plugin> list;
++#ifdef Q_OS_IOS
++    for (const QStaticPlugin &plugin : QPluginLoader::staticPlugins()) {
++        const QJsonObject json = plugin.metaData().value("MetaData").toObject();
++        if (!json.value("X-KDE-ServiceTypes").toArray().contains(QJsonValue(servicetype))) {
++            continue;
++        }
++        QStringList mimeTypes = json.value("X-KDE-ExtraNativeMimeTypes").toString().split(',');
++        mimeTypes += json.value("MimeType").toString().split(';');
++        mimeTypes += json.value("X-KDE-NativeMimeType").toString();
++        if (mimetype.isEmpty() || mimeTypes.contains(mimetype)) {
++            list << Plugin(plugin, &m_mutex);
++        }
++    }
++    return list;
++#endif
+     Q_FOREACH(const PluginCacheEntry &plugin, m_pluginLoaderCache) {
+         if (!plugin.serviceTypes.contains(QJsonValue(servicetype))) {
+             continue;
+@@ -208,6 +226,11 @@ KoJsonTrader::Plugin::Plugin(QSharedPointer<QPluginLoader> loader, QMutex *mutex
+ {
+ }
+ 
++KoJsonTrader::Plugin::Plugin(const QStaticPlugin &plugin, QMutex *mutex)
++    : m_staticPlugin(new QStaticPlugin(plugin)), m_mutex(mutex)
++{
++}
++
+ KoJsonTrader::Plugin::~Plugin()
+ {
+ }
+@@ -215,20 +238,20 @@ KoJsonTrader::Plugin::~Plugin()
+ QObject *KoJsonTrader::Plugin::instance() const
+ {
+     QMutexLocker l(m_mutex);
+-    return m_loader->instance();
++    return m_staticPlugin ? m_staticPlugin->instance() : m_loader->instance();
+ }
+ 
+ QJsonObject KoJsonTrader::Plugin::metaData() const
+ {
+-    return m_loader->metaData();
++    return m_staticPlugin ? m_staticPlugin->metaData() : m_loader->metaData();
+ }
+ 
+ QString KoJsonTrader::Plugin::fileName() const
+ {
+-    return m_loader->fileName();
++    return m_staticPlugin ? QStringLiteral("static:") + metaData().value("className").toString() : m_loader->fileName();
+ }
+ 
+ QString KoJsonTrader::Plugin::errorString() const
+ {
+-    return m_loader->errorString();
++    return m_staticPlugin ? QString() : m_loader->errorString();
+ }
+diff --git a/libs/koplugin/KoJsonTrader.h b/libs/koplugin/KoJsonTrader.h
+index 409f0a5..b9096ba 100644
+--- a/libs/koplugin/KoJsonTrader.h
++++ b/libs/koplugin/KoJsonTrader.h
+@@ -16,6 +16,7 @@
+ #include "kritaplugin_export.h"
+ 
+ class QPluginLoader;
++struct QStaticPlugin;
+ 
+ /**
+  * Support class to fetch a list of relevant plugins
+@@ -34,6 +35,7 @@ public:
+     struct KRITAPLUGIN_EXPORT Plugin {
+         Plugin() = default;
+         Plugin(QSharedPointer<QPluginLoader> loader, QMutex *mutex);
++        Plugin(const QStaticPlugin &plugin, QMutex *mutex);
+         ~Plugin();
+ 
+         QObject *instance() const;
+@@ -44,6 +46,7 @@ public:
+ 
+     private:
+         QSharedPointer<QPluginLoader> m_loader;
++        QSharedPointer<QStaticPlugin> m_staticPlugin;
+         QMutex *m_mutex = 0;
+     };
+ 
+diff --git a/libs/resources/CMakeLists.txt b/libs/resources/CMakeLists.txt
+index d0c08c4..e3081df 100644
+--- a/libs/resources/CMakeLists.txt
++++ b/libs/resources/CMakeLists.txt
+@@ -60,6 +60,7 @@ set(kritaresources_LIB_SRCS
+ )
+ 
+ qt_add_resources(kritaresources_LIB_SRCS sql.qrc)
++krita_register_ios_static_resource(sql ":/create_version_information.sql" sql.qrc)
+ 
+ kis_add_library(kritaresources SHARED ${kritaresources_LIB_SRCS})
+ 
+@@ -86,4 +87,3 @@ set_target_properties(kritaresources PROPERTIES
+     VERSION ${GENERIC_KRITA_LIB_VERSION} SOVERSION ${GENERIC_KRITA_LIB_SOVERSION}
+ )
+ install(TARGETS kritaresources ${INSTALL_TARGETS_DEFAULT_ARGS} )
+-
+diff --git a/libs/resources/KoResourcePaths.cpp b/libs/resources/KoResourcePaths.cpp
+index 32b0e54..72f27f0 100644
+--- a/libs/resources/KoResourcePaths.cpp
++++ b/libs/resources/KoResourcePaths.cpp
+@@ -140,6 +140,8 @@ QString getInstallationPrefix() {
+     }
+ 
+     return bundlePath;
++#elif defined(Q_OS_IOS)
++    return qApp->applicationDirPath() + "/";
+ #elif defined(Q_OS_HAIKU)
+ 	return qApp->applicationDirPath() + "/";
+ #elif defined(Q_OS_ANDROID)
+diff --git a/libs/ui/CMakeLists.txt b/libs/ui/CMakeLists.txt
+index 35dee04..9fa2e9d 100644
+--- a/libs/ui/CMakeLists.txt
++++ b/libs/ui/CMakeLists.txt
+@@ -12,7 +12,7 @@ endif()
+ 
+ add_subdirectory( tests )
+ 
+-if (APPLE)
++if (APPLE AND NOT IOS)
+     find_library(FOUNDATION_LIBRARY Foundation)
+     find_library(APPKIT_LIBRARY AppKit)
+ endif ()
+@@ -566,7 +566,7 @@ if (ENABLE_UPDATERS)
+ endif()
+ 
+ 
+-if(APPLE)
++if(APPLE AND NOT IOS)
+     set(kritaui_LIB_SRCS
+         ${kritaui_LIB_SRCS}
+         input/kis_extended_modifiers_mapper_osx.mm
+@@ -811,7 +811,7 @@ if (HAIKU)
+   target_link_libraries(kritaui PRIVATE network expat iconv intl)
+ endif()
+ 
+-if(APPLE)
++if(APPLE AND NOT IOS)
+     target_link_libraries(kritaui
+         PUBLIC
+         kritamacosutils
+@@ -844,7 +844,7 @@ set_target_properties(kritaui
+ install(TARGETS kritaui  ${INSTALL_TARGETS_DEFAULT_ARGS})
+ 
+ 
+-if (APPLE)
++if (APPLE AND NOT IOS)
+     install(FILES osx.stylesheet DESTINATION ${KDE_INSTALL_DATADIR}/krita)
+ endif ()
+ 
+diff --git a/libs/ui/KisMainWindow.cpp b/libs/ui/KisMainWindow.cpp
+index eb695ba..945c101 100644
+--- a/libs/ui/KisMainWindow.cpp
++++ b/libs/ui/KisMainWindow.cpp
+@@ -15,6 +15,7 @@
+ #include <QApplication>
+ #include <QByteArray>
+ #include <QCloseEvent>
++#include <QDir>
+ #include <QStandardPaths>
+ #include <QDesktopServices>
+ #include <QScreen>
+@@ -47,6 +48,7 @@
+ #include <QTemporaryDir>
+ #include <QScrollArea>
+ #include <QActionGroup>
++#include <QTimer>
+ 
+ #include <kactioncollection.h>
+ #include <kactionmenu.h>
+@@ -168,6 +170,54 @@
+ #include <KisAndroidScaling.h>
+ #endif
+ 
++#ifdef Q_OS_IOS
++namespace
++{
++QString iosDocumentsDirectory()
++{
++    const QString path = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
++    if (!path.isEmpty() && !QDir().mkpath(path)) {
++        qWarning() << "Could not create the iOS Documents directory:" << path;
++    }
++    return path;
++}
++
++QString iosSuggestedDocumentPath(KisDocument *document)
++{
++    QString baseName = document ? document->documentInfo()->aboutInfo("title") : QString();
++    if (baseName.isEmpty() || baseName == i18n("Unnamed")) {
++        baseName = i18n("Untitled");
++    }
++
++    baseName.replace(QLatin1Char('/'), QLatin1Char('-'));
++
++    const QString suffix = KisMimeDatabase::suffixesForMimeType(KIS_MIME_TYPE).value(0, QStringLiteral("kra"));
++    return QDir(iosDocumentsDirectory()).filePath(baseName + QLatin1Char('.') + suffix);
++}
++
++QString iosUniqueDocumentPath(KisDocument *document, bool makeCopy)
++{
++    QString suggestedPath = iosSuggestedDocumentPath(document);
++    QFileInfo suggestedInfo(suggestedPath);
++    QString baseName = suggestedInfo.completeBaseName();
++
++    if (makeCopy) {
++        baseName += i18n(" Copy");
++    }
++
++    const QDir directory = suggestedInfo.dir();
++    const QString suffix = suggestedInfo.suffix();
++    QString candidate = directory.filePath(baseName + QLatin1Char('.') + suffix);
++    int copyNumber = 2;
++    while (QFileInfo::exists(candidate)) {
++        candidate = directory.filePath(baseName + QLatin1Char(' ') + QString::number(copyNumber++)
++                                       + QLatin1Char('.') + suffix);
++    }
++    return candidate;
++}
++}
++#endif
++
+ class ToolDockerFactory : public KoDockFactoryBase
+ {
+ public:
+@@ -1166,10 +1216,15 @@ bool KisMainWindow::openDocumentInternal(const QString &path, OpenFlags flags)
+                    )
+             )
+     {
+-        QString path = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
++        QString path =
++#ifdef Q_OS_IOS
++            iosDocumentsDirectory();
++#else
++            QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+         if (!QFileInfo(path).exists()) {
+             path = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+         }
++#endif
+         newdoc->setPath(path + "/" + newdoc->objectName() + ".kra");
+     }
+ 
+@@ -1220,10 +1275,47 @@ KisView* KisMainWindow::addViewAndNotifyLoadingCompleted(KisDocument *document,
+     return view;
+ }
+ 
++#ifdef Q_OS_IOS
++void KisMainWindow::addViewAndNotifyLoadingCompletedStaged(KisDocument *document)
++{
++    QPointer<KisDocument> guardedDocument(document);
++
++    QTimer::singleShot(0, this, [this, guardedDocument]() {
++        if (!guardedDocument) {
++            return;
++        }
++
++        showWelcomeScreen(false); // see workaround in function header
++
++        QTimer::singleShot(0, this, [this, guardedDocument]() {
++            if (!guardedDocument) {
++                return;
++            }
++
++            QPointer<KisView> view(
++                KisPart::instance()->createView(guardedDocument, d->viewManager, this));
++
++            QTimer::singleShot(0, this, [this, guardedDocument, view]() {
++                if (!guardedDocument || !view) {
++                    return;
++                }
++
++                addView(view);
++                Q_EMIT guiLoadingFinished();
++            });
++        });
++    });
++}
++#endif
++
+ QStringList KisMainWindow::showOpenFileDialog(bool isImporting)
+ {
+     KoFileDialog dialog(this, KoFileDialog::ImportFiles, "OpenDocument");
++#ifdef Q_OS_IOS
++    dialog.setDefaultDir(iosDocumentsDirectory(), true);
++#else
+     dialog.setDefaultDir(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation));
++#endif
+     dialog.setMimeTypeFilters(KisImportExportManager::supportedMimeTypes(KisImportExportManager::Import));
+     dialog.setCaption(isImporting ? i18n("Import Images") : i18n("Open Images"));
+ 
+@@ -1414,6 +1506,28 @@ bool KisMainWindow::saveDocument(KisDocument *document, bool saveas, bool isExpo
+     bool ret = false;
+ 
+     if (document->path().isEmpty() || isExporting || saveas) {
++#ifdef Q_OS_IOS
++        if (!isExporting) {
++            // QFileDialog::exec() enters a nested modal event loop which can
++            // stop responding on iPadOS. Save new documents and Save As copies
++            // directly into the Files-visible Documents directory instead.
++            const QString newFilePath = iosUniqueDocumentPath(document, !document->path().isEmpty());
++            const QByteArray outputFormat = nativeFormat;
++
++            if (document->documentInfo()->aboutInfo("title") == i18n("Unnamed")) {
++                document->documentInfo()->setAboutInfo("title", QFileInfo(newFilePath).completeBaseName());
++            }
++
++            ret = document->saveAs(newFilePath, outputFormat, true);
++            if (ret) {
++                KisPart::instance()->queueAddRecentURLToAllMainWindowsOnFileSaved(QUrl::fromLocalFile(newFilePath));
++            } else {
++                dbgUI << "Failed iOS Save As to" << newFilePath;
++            }
++            return ret;
++        }
++#endif
++
+         // if you're just File/Save As'ing to change filter options you
+         // don't want to be reminded about overwriting files etc.
+         bool justChangingFilterOptions = false;
+@@ -1444,6 +1558,13 @@ bool KisMainWindow::saveDocument(KisDocument *document, bool saveas, bool isExpo
+             QString proposedMimeType = QString::fromLatin1(default_mime_type);
+ 
+             // Get the last used location for saving
++#ifdef Q_OS_IOS
++            // QFileDialog's iOS native helper does not support AcceptSave. The
++            // widget dialog therefore saves into the app container. Always use
++            // the current installation's Files-visible Documents directory;
++            // persisted paths may contain the UUID of an older installation.
++            QString proposedPath = iosDocumentsDirectory();
++#else
+             KConfigGroup group =  KSharedConfig::openConfig()->group("File Dialogs");
+             QString proposedPath = group.readEntry("SaveAs", "");
+             // if that is empty, get the last used location for loading
+@@ -1454,6 +1575,7 @@ bool KisMainWindow::saveDocument(KisDocument *document, bool saveas, bool isExpo
+             if (proposedPath.isEmpty()) {
+                 proposedPath = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+             }
++#endif
+             // But only use that if the suggestedUrl, that is, the document's own url is empty, otherwise
+             // open the location where the document currently is.
+ 
+@@ -1470,7 +1592,11 @@ bool KisMainWindow::saveDocument(KisDocument *document, bool saveas, bool isExpo
+ 
+             if (!isExporting) {
+                 // If Saving, use the document's mimetype, or if that is empty, kra, which is the safest.
++#ifdef Q_OS_IOS
++                dialog.setDefaultDir(suggestedURL.isEmpty() ? iosSuggestedDocumentPath(document) : suggestedURL.toLocalFile(), true);
++#else
+                 dialog.setDefaultDir(suggestedURL.isEmpty() ? proposedPath : suggestedURL.toLocalFile(), true);
++#endif
+                 default_mime_type = document->mimeType().isEmpty() ? nativeFormat : document->mimeType();
+             }
+             dialog.setMimeTypeFilters(mimeFilter, QString::fromLatin1(default_mime_type));
+diff --git a/libs/ui/KisMainWindow.h b/libs/ui/KisMainWindow.h
+index d351fa7..0a2b84e 100644
+--- a/libs/ui/KisMainWindow.h
++++ b/libs/ui/KisMainWindow.h
+@@ -452,6 +452,15 @@ private:
+      */
+     void addView(KisView *view, QMdiSubWindow *subWindow = 0);
+ 
++#ifdef Q_OS_IOS
++    /**
++     * Spread the expensive first-canvas setup over multiple run-loop turns.
++     * iPadOS terminates the app when all of this work is performed from the
++     * new-document dialog's button event as one uninterrupted operation.
++     */
++    void addViewAndNotifyLoadingCompletedStaged(KisDocument *document);
++#endif
++
+     friend class KisPart;
+ 
+ 
+diff --git a/libs/ui/KisPart.cpp b/libs/ui/KisPart.cpp
+index 78fa082..d813c4d 100644
+--- a/libs/ui/KisPart.cpp
++++ b/libs/ui/KisPart.cpp
+@@ -610,7 +610,11 @@ void KisPart::startCustomDocument(KisDocument* doc)
+ {
+     addDocument(doc);
+     KisMainWindow *mw = currentMainwindow();
++#ifdef Q_OS_IOS
++    mw->addViewAndNotifyLoadingCompletedStaged(doc);
++#else
+     mw->addViewAndNotifyLoadingCompleted(doc);
++#endif
+ 
+ }
+ 
+diff --git a/libs/ui/KisView.cpp b/libs/ui/KisView.cpp
+index cfc89bb..335682f 100644
+--- a/libs/ui/KisView.cpp
++++ b/libs/ui/KisView.cpp
+@@ -27,6 +27,7 @@
+ #include <QTemporaryFile>
+ #include <QApplication>
+ #include <QScreen>
++#include <QTimer>
+ #include <QDragEnterEvent>
+ #include <QDropEvent>
+ #include <QList>
+@@ -136,6 +137,11 @@ public:
+     KisSignalCompressor floatingMessageCompressor;
+     QMdiSubWindow *subWindow {nullptr};
+ 
++#ifdef Q_OS_IOS
++    bool iosClosePending {false};
++    QPointer<QMessageBox> iosClosePrompt;
++#endif
++
+     bool softProofing {false};
+     bool gamutCheck {false};
+ 
+@@ -256,6 +262,15 @@ KisView::KisView(KisDocument *document, KisViewManager *viewManager, QWidget *pa
+ 
+ KisView::~KisView()
+ {
++#ifdef Q_OS_IOS
++    if (d->iosClosePrompt) {
++        // The prompt is parented to the main window, so it can outlive this
++        // view unless explicitly dismissed on session/view replacement.
++        d->iosClosePrompt->disconnect(this);
++        d->iosClosePrompt->hide();
++        d->iosClosePrompt->deleteLater();
++    }
++#endif
+     if (d->viewManager) {
+         if (d->viewManager->filterManager()->isStrokeRunning()) {
+             d->viewManager->filterManager()->cancelDialog();
+@@ -1157,6 +1172,22 @@ bool KisView::queryClose()
+     if (!document())
+         return true;
+ 
++#ifdef Q_OS_IOS
++    // Return to UIKit before displaying the confirmation. A synchronous
++    // QMessageBox::warning() holds the close event in a nested dialog loop.
++    if (d->iosClosePending) {
++        return false;
++    }
++    if (document()->isSaving()) {
++        waitForIosSaveBeforeClose(false);
++        return false;
++    }
++    if (document()->isModified()) {
++        requestIosCloseConfirmation();
++        return false;
++    }
++    return true;
++#else
+     document()->waitForSavingToComplete();
+ 
+     if (document()->isModified()) {
+@@ -1193,8 +1224,125 @@ bool KisView::queryClose()
+     }
+ 
+     return true;
++#endif
++}
+ 
++#ifdef Q_OS_IOS
++void KisView::requestIosCloseConfirmation()
++{
++    d->iosClosePending = true;
++    QTimer::singleShot(0, this, [this]() {
++        if (!document() || QApplication::activeModalWidget()) {
++            d->iosClosePending = false;
++            return;
++        }
++
++        QString name = QFileInfo(document()->path()).fileName();
++        if (name.isEmpty()) {
++            name = i18n("Untitled");
++        }
++
++        // Keep the confirmation in the Qt widget hierarchy. UIKit's native
++        // alert helper presents from the root controller, which may already
++        // be presenting/dismissing another controller.
++        auto *prompt = new QMessageBox(QMessageBox::Warning,
++                                      i18nc("@title:window", "Krita"),
++                                      i18n("<p>The document <b>'%1'</b> has been modified.</p><p>Do you want to save it?</p>", name),
++                                      QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
++                                      mainWindow());
++        prompt->setOption(QMessageBox::Option::DontUseNativeDialog);
++        prompt->setDefaultButton(QMessageBox::Yes);
++        prompt->setWindowModality(Qt::ApplicationModal);
++        prompt->setAttribute(Qt::WA_DeleteOnClose);
++        d->iosClosePrompt = prompt;
++
++        const QPointer<KisDocument> closingDocument = document();
++        connect(prompt, &QDialog::finished, this, [this, closingDocument](int result) {
++            d->iosClosePrompt = nullptr;
++            // Let the confirmation finish hiding before saving or destroying
++            // the view. All callbacks are cancelled if this view is destroyed.
++            QTimer::singleShot(0, this, [this, closingDocument, result]() {
++                if (!closingDocument || document() != closingDocument) {
++                    d->iosClosePending = false;
++                    return;
++                }
++                if (result != QMessageBox::Yes && result != QMessageBox::No) {
++                    d->iosClosePending = false;
++                    return;
++                }
++
++                if (KisImageSP image = document()->image()) {
++                    if (result == QMessageBox::Yes) {
++                        image->requestStrokeEnd();
++                    } else {
++                        image->requestStrokeCancellation();
++                    }
++                }
++
++                // Both saveDocument() and the forced-operation wait can open
++                // another synchronous progress dialog if the image is busy.
++                // Let pending strokes and any autosave finish in the normal
++                // event loop before entering either completion path.
++                auto *timer = new QTimer(this);
++                timer->setInterval(100);
++                connect(timer, &QTimer::timeout, this, [this, timer, closingDocument, result]() {
++                    if (!closingDocument || document() != closingDocument) {
++                        timer->stop();
++                        timer->deleteLater();
++                        d->iosClosePending = false;
++                        return;
++                    }
++                    KisImageSP image = document()->image();
++                    if (document()->isSaving() || (image && !image->isIdle(result == QMessageBox::No))) {
++                        return;
++                    }
++                    timer->stop();
++                    timer->deleteLater();
++
++                    if (result == QMessageBox::Yes) {
++                        const bool isNative = document()->mimeType() == document()->nativeFormatMimeType();
++                        if (!mainWindow() || !mainWindow()->saveDocument(document(), !isNative, false)) {
++                            d->iosClosePending = false;
++                            return;
++                        }
++                        waitForIosSaveBeforeClose(true);
++                    } else {
++                        document()->removeAutoSaveFiles(document()->localFilePath(), document()->isRecovered());
++                        document()->setModified(false);
++                        d->iosClosePending = false;
++                        closeView();
++                    }
++                });
++                timer->start();
++            });
++        });
++        prompt->show();
++    });
++}
++
++void KisView::waitForIosSaveBeforeClose(bool closeAfterSave)
++{
++    d->iosClosePending = true;
++    auto *timer = new QTimer(this);
++    timer->setInterval(100);
++    connect(timer, &QTimer::timeout, this, [this, timer, closeAfterSave]() {
++        if (document() && document()->isSaving()) {
++            return;
++        }
++        timer->stop();
++        timer->deleteLater();
++        d->iosClosePending = false;
++
++        if (closeAfterSave && document() && document()->isModified()) {
++            // A failed/cancelled save, or edits made during the save, must
++            // leave the document open. Never treat "save started" as success.
++            return;
++        }
++        closeView();
++    });
++    timer->start();
+ }
++#endif
+ 
+ void KisView::slotMigratedToScreen(QScreen *screen)
+ {
+diff --git a/libs/ui/KisView.h b/libs/ui/KisView.h
+index 886ed1c..d8693b6 100644
+--- a/libs/ui/KisView.h
++++ b/libs/ui/KisView.h
+@@ -260,6 +260,11 @@ public Q_SLOTS:
+ private:
+     bool shouldAcceptDrag(const QDropEvent *event) const;
+ 
++#ifdef Q_OS_IOS
++    void requestIosCloseConfirmation();
++    void waitForIosSaveBeforeClose(bool closeAfterSave);
++#endif
++
+     class Private;
+     Private * const d;
+ 
+diff --git a/libs/ui/animation/KisFFMpegWrapper.cpp b/libs/ui/animation/KisFFMpegWrapper.cpp
+index ec69d45..f229dfb 100644
+--- a/libs/ui/animation/KisFFMpegWrapper.cpp
++++ b/libs/ui/animation/KisFFMpegWrapper.cpp
+@@ -45,6 +45,7 @@ KisFFMpegWrapper::~KisFFMpegWrapper()
+ 
+ void KisFFMpegWrapper::startNonBlocking(const KisFFMpegWrapperSettings &settings)
+ {
++#if QT_CONFIG(process)
+     KIS_ASSERT(m_process == nullptr);
+ 
+     m_stdoutBuffer.clear();
+@@ -158,6 +159,10 @@ void KisFFMpegWrapper::startNonBlocking(const KisFFMpegWrapperSettings &settings
+     fixUpNonEmbeddedProcessEnvironment(settings.processPath, *m_process);
+ 
+     m_process->start(settings.processPath, args);
++#else
++    Q_UNUSED(settings);
++    Q_EMIT sigFinishedWithError(i18n("External video processing is not available on this platform."));
++#endif
+ }
+ 
+ KisImportExportErrorCode KisFFMpegWrapper::start(const KisFFMpegWrapperSettings &settings)
+@@ -195,6 +200,7 @@ KisImportExportErrorCode KisFFMpegWrapper::start(const KisFFMpegWrapperSettings
+ 
+ bool KisFFMpegWrapper::waitForFinished(int msecs)
+ {
++#if QT_CONFIG(process)
+     if (!m_process) return false;
+ 
+     if (m_process->waitForStarted(msecs)) {
+@@ -202,6 +208,10 @@ bool KisFFMpegWrapper::waitForFinished(int msecs)
+     }
+ 
+     return false;
++#else
++    Q_UNUSED(msecs);
++    return false;
++#endif
+ }
+ 
+ void KisFFMpegWrapper::updateProgressDialog(int progressValue) {
+@@ -221,9 +231,11 @@ void KisFFMpegWrapper::updateProgressDialog(int progressValue) {
+ 
+     if (m_processSettings.totalFrames > 0) m_progress->setValue(100 * progressValue / m_processSettings.totalFrames);
+ 
++#if QT_CONFIG(process)
+     if (m_process && m_process->state() == QProcess::Running) {
+         QApplication::processEvents();
+     }
++#endif
+ }
+ 
+ bool KisFFMpegWrapper::ffprobeCheckStreamsValid(const QJsonObject& ffprobeJsonObj, const QString& ffprobeSTDERR)
+@@ -252,6 +264,7 @@ bool KisFFMpegWrapper::ffprobeCheckStreamsValid(const QJsonObject& ffprobeJsonOb
+ 
+ void KisFFMpegWrapper::reset()
+ {
++#if QT_CONFIG(process)
+     if (m_process == nullptr)
+         return;
+ 
+@@ -260,10 +273,14 @@ void KisFFMpegWrapper::reset()
+         m_process->kill();
+     }
+     m_process.reset();
++#else
++
++#endif
+ }
+ 
+ void KisFFMpegWrapper::slotReadyReadSTDERR()
+ {
++#if QT_CONFIG(process)
+     QByteArray stderrRawBuffer = m_process->readAllStandardError();
+     
+     Q_EMIT sigReadSTDERR(stderrRawBuffer);
+@@ -305,10 +322,14 @@ void KisFFMpegWrapper::slotReadyReadSTDERR()
+         Q_EMIT sigProgressUpdated(frameNo);
+     }
+     
++#else
++
++#endif
+ }
+ 
+ void KisFFMpegWrapper::slotReadyReadSTDOUT()
+ {
++#if QT_CONFIG(process)
+     QByteArray stdoutRawBuffer = m_process->readAllStandardOutput();
+     
+     Q_EMIT sigReadSTDOUT(stdoutRawBuffer);
+@@ -338,6 +359,9 @@ void KisFFMpegWrapper::slotReadyReadSTDOUT()
+     }
+ 
+     
++#else
++
++#endif
+ }
+ 
+ void KisFFMpegWrapper::slotStarted()
+@@ -349,6 +373,7 @@ void KisFFMpegWrapper::slotStarted()
+ 
+ void KisFFMpegWrapper::slotFinished(int exitCode)
+ {
++#if QT_CONFIG(process)
+     dbgFile << "FFMpeg finished with code" << exitCode;
+     if (!m_processSettings.batchMode && m_progress){
+         m_progress->setValue(100);
+@@ -364,6 +389,10 @@ void KisFFMpegWrapper::slotFinished(int exitCode)
+     } else {
+         Q_EMIT sigFinished();
+     }
++#else
++    Q_UNUSED(exitCode);
++    Q_EMIT sigFinishedWithError(i18n("External video processing is not available on this platform."));
++#endif
+ }
+ 
+ void KisFFMpegWrapper::fixUpNonEmbeddedProcessEnvironment(const QString &processPath, QProcess &process)
+@@ -415,6 +444,7 @@ void KisFFMpegWrapper::fixUpNonEmbeddedProcessEnvironment(const QString &process
+ 
+ QByteArray KisFFMpegWrapper::runProcessAndReturn(const QString &processPath, const QStringList &args, int msecs)
+ {
++#if QT_CONFIG(process)
+     QProcess runProcess;
+     
+     fixUpNonEmbeddedProcessEnvironment(processPath, runProcess);
+@@ -432,6 +462,12 @@ QByteArray KisFFMpegWrapper::runProcessAndReturn(const QString &processPath, con
+     if (successfulStart) return runProcess.readAllStandardOutput();
+ 
+     return "";
++#else
++    Q_UNUSED(processPath);
++    Q_UNUSED(args);
++    Q_UNUSED(msecs);
++    return {};
++#endif
+ }
+ 
+ QString KisFFMpegWrapper::configuredFFMpegLocation()
+diff --git a/libs/ui/canvas/kis_mirror_axis.cpp b/libs/ui/canvas/kis_mirror_axis.cpp
+index e36c3b9..480b472 100644
+--- a/libs/ui/canvas/kis_mirror_axis.cpp
++++ b/libs/ui/canvas/kis_mirror_axis.cpp
+@@ -156,6 +156,7 @@ void KisMirrorAxis::drawDecoration(QPainter& gc, const QRectF& updateArea, const
+     gc.setBrush(canvas->displayRendererInterface()->convertColorToDisplayColorSpace(c));
+     gc.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+ 
++#ifdef GL_MULTISAMPLE_EXT
+     QOpenGLContext *ctx = QOpenGLContext::currentContext();
+     bool hasMultisample = false;
+     if (ctx) {
+@@ -171,6 +172,8 @@ void KisMirrorAxis::drawDecoration(QPainter& gc, const QRectF& updateArea, const
+         }
+     }
+ 
++#endif
++
+     float halfHandleSize = d->config.handleSize() / 2;
+ 
+     const qreal dpr = canvas->canvasWidget()->devicePixelRatioF();
+@@ -229,12 +232,15 @@ void KisMirrorAxis::drawDecoration(QPainter& gc, const QRectF& updateArea, const
+         }
+     }
+ 
++#ifdef GL_MULTISAMPLE_EXT
+     if (hasMultisample) {
+         gc.beginNativePainting();
+         ctx->functions()->glDisable(GL_MULTISAMPLE_EXT);
+         gc.endNativePainting();
+     }
+ 
++#endif
++
+     gc.restore();
+ 
+ }
+diff --git a/libs/ui/canvas/kis_qpainter_canvas.cpp b/libs/ui/canvas/kis_qpainter_canvas.cpp
+index 558545d..2145f7f 100644
+--- a/libs/ui/canvas/kis_qpainter_canvas.cpp
++++ b/libs/ui/canvas/kis_qpainter_canvas.cpp
+@@ -65,7 +65,11 @@ KisQPainterCanvas::KisQPainterCanvas(KisCanvas2 *canvas, KisCoordinatesConverter
+     setAutoFillBackground(true);
+     setAcceptDrops(true);
+     setFocusPolicy(Qt::StrongFocus);
++#ifdef Q_OS_IOS
++    setAttribute(Qt::WA_InputMethodEnabled, false);
++#else
+     setAttribute(Qt::WA_InputMethodEnabled, true);
++#endif
+     setAttribute(Qt::WA_StaticContents);
+     setAttribute(Qt::WA_OpaquePaintEvent);
+ #ifdef Q_OS_MACOS
+diff --git a/libs/ui/input/kis_input_manager.cpp b/libs/ui/input/kis_input_manager.cpp
+index af3b7d5..3c532dd 100644
+--- a/libs/ui/input/kis_input_manager.cpp
++++ b/libs/ui/input/kis_input_manager.cpp
+@@ -12,6 +12,14 @@
+ #include <QQueue>
+ #include <klocalizedstring.h>
+ #include <QApplication>
++#include <QAbstractSpinBox>
++#include <QComboBox>
++#include <QEvent>
++#include <QInputMethod>
++#include <QLineEdit>
++#include <QPlainTextEdit>
++#include <QTextEdit>
++#include <QTimer>
+ #include <QTouchEvent>
+ #include <QWidget>
+ 
+@@ -55,9 +63,135 @@ uint qHash(QPointer<T> value) {
+     return reinterpret_cast<quintptr>(value.data());
+ }
+ 
++#ifdef Q_OS_IOS
++namespace {
++
++constexpr auto s_iosExplicitTextInputProperty = "kritaIosExplicitTextInput";
++
++bool hasIosNonTextEditorAncestor(QWidget *widget)
++{
++    for (QWidget *ancestor = widget ? widget->parentWidget() : nullptr;
++         ancestor;
++         ancestor = ancestor->parentWidget()) {
++        if (qobject_cast<QAbstractSpinBox *>(ancestor) || qobject_cast<QComboBox *>(ancestor)) {
++            return true;
++        }
++    }
++    return false;
++}
++
++bool isIosExplicitTextInput(QWidget *widget)
++{
++    if (!widget) {
++        return false;
++    }
++
++    if (widget->property(s_iosExplicitTextInputProperty).toBool()) {
++        return true;
++    }
++
++    if (hasIosNonTextEditorAncestor(widget)) {
++        return false;
++    }
++
++    return qobject_cast<QLineEdit *>(widget)
++        || qobject_cast<QTextEdit *>(widget)
++        || qobject_cast<QPlainTextEdit *>(widget);
++}
++
++void hideIosInputMethod()
++{
++    // Qt's native iOS combo-box picker is an inputView on the same responder
++    // as the keyboard. Resetting/hiding that responder cancels the picker.
++    if (QObject *focusObject = QGuiApplication::focusObject()) {
++        QInputMethodQueryEvent query(Qt::ImPlatformData);
++        QCoreApplication::sendEvent(focusObject, &query);
++        if (query.value(Qt::ImPlatformData).toMap().value(QStringLiteral("inputView")).value<void *>()) {
++            return;
++        }
++    }
++
++    QInputMethod *inputMethod = QGuiApplication::inputMethod();
++    if (inputMethod && inputMethod->isVisible()) {
++        inputMethod->reset();
++        inputMethod->hide();
++    }
++}
++
++class IosInputMethodGuard final : public QObject
++{
++public:
++    explicit IosInputMethodGuard(QObject *parent)
++        : QObject(parent)
++    {
++    }
++
++    bool eventFilter(QObject *watched, QEvent *event) override
++    {
++        switch (event->type()) {
++        case QEvent::FocusIn:
++        case QEvent::MouseButtonPress:
++        case QEvent::TouchBegin: {
++            QWidget *widget = qobject_cast<QWidget *>(watched);
++            if (widget && !isIosExplicitTextInput(widget)) {
++                // Run after Qt's focus processing, which may otherwise show
++                // the iOS keyboard again after this event filter returns.
++                if (!m_hidePending) {
++                    m_hidePending = true;
++                    QTimer::singleShot(0, this, [this]() {
++                        m_hidePending = false;
++                        // Focus may have moved to a real editor while this
++                        // callback was queued. Use the current focus, rather
++                        // than the non-text widget that scheduled the hide.
++                        if (!isIosExplicitTextInput(QApplication::focusWidget())) {
++                            hideIosInputMethod();
++                        }
++                    });
++                }
++            }
++            break;
++        }
++        default:
++            break;
++        }
++        return false;
++    }
++
++private:
++    bool m_hidePending = false;
++};
++
++void installIosInputMethodGuard()
++{
++    static bool installed = false;
++    if (!installed && qApp) {
++        qApp->installEventFilter(new IosInputMethodGuard(qApp));
++        installed = true;
++    }
++}
++
++void updateIosInputMethod(KisCanvas2 *canvas, bool textMode)
++{
++    if (!canvas || !canvas->canvasWidget()) {
++        return;
++    }
++
++    canvas->canvasWidget()->setProperty(s_iosExplicitTextInputProperty, textMode);
++    canvas->canvasWidget()->setAttribute(Qt::WA_InputMethodEnabled, textMode);
++    if (!textMode) {
++        hideIosInputMethod();
++    }
++}
++
++} // namespace
++#endif
++
+ KisInputManager::KisInputManager(QObject *parent)
+     : QObject(parent), d(new Private(this))
+ {
++#ifdef Q_OS_IOS
++    installIosInputMethodGuard();
++#endif
+     d->setupActions();
+ 
+     connect(KisConfigNotifier::instance(), SIGNAL(configChanged()), SLOT(slotConfigChanged()));
+@@ -107,6 +241,32 @@ void KisInputManager::registerPopupWidget(KisPopupWidgetInterface *popupWidget)
+     connect(popupObject, SIGNAL(finished()), this, SLOT(deregisterPopupWidget()));
+ }
+ 
++void KisInputManager::togglePopupWidgetAt(const QPoint &canvasPosition)
++{
++    if (!canvas() || !canvas()->canvasWidget() || !toolProxy()) {
++        return;
++    }
++
++    KisPopupWidgetInterface *popupWidget = toolProxy()->popupWidget();
++    if (!popupWidget) {
++        return;
++    }
++
++    if (popupWidget->onScreen()) {
++        popupWidget->dismiss();
++        return;
++    }
++
++    QPoint position = canvasPosition;
++    const QRect canvasRect = canvas()->canvasWidget()->rect();
++    if (!canvasRect.contains(position)) {
++        position = canvasRect.center();
++    }
++
++    registerPopupWidget(popupWidget);
++    popupWidget->popup(position);
++}
++
+ void KisInputManager::deregisterPopupWidget()
+ {
+     if (d->popupWidget->onScreen()) {
+@@ -670,7 +830,7 @@ bool KisInputManager::eventFilterImpl(QEvent * event)
+         }
+         QTouchEvent *touchEvent = static_cast<QTouchEvent*>(event);
+ 
+-#ifdef Q_OS_MAC
++#ifdef Q_OS_MACOS
+         const int pressedCount = KisTouchShortcut::countTouchPoints(touchEvent, KisTouchShortcut::pressedOnlyTouchStates());
+         const int totalPointCount = KisTouchShortcut::countTouchPoints(touchEvent, KisTouchShortcut::allTouchStates());
+ 
+@@ -824,6 +984,9 @@ void KisInputManager::slotToolChanged()
+     KoToolManager *toolManager = KoToolManager::instance();
+     KoToolBase *tool = toolManager->toolById(canvas(), toolManager->activeToolId());
+     if (tool) {
++#ifdef Q_OS_IOS
++        updateIosInputMethod(canvas(), tool->isInTextMode());
++#endif
+         // once more, don't forget the global state whenever matcher may trigger a KisAbstractInputAction
+         KisAbstractInputAction::setInputManager(this);
+ 
+@@ -847,6 +1010,9 @@ void KisInputManager::slotTextModeChanged()
+     KoToolManager *toolManager = KoToolManager::instance();
+     KoToolBase *tool = toolManager->toolById(canvas(), toolManager->activeToolId());
+     if (tool) {
++#ifdef Q_OS_IOS
++        updateIosInputMethod(canvas(), tool->isInTextMode());
++#endif
+         if (tool->isInTextMode()) {
+             d->forwardAllEventsToTool = true;
+             d->matcher.suppressAllKeyboardActions(true);
+@@ -878,6 +1044,11 @@ void KisInputManager::profileChanged()
+                 d->addWheelShortcut(shortcut->action(), shortcut->mode(), shortcut->keys(), shortcut->wheel());
+                 break;
+             case KisShortcutConfiguration::TouchGestureType:
++#ifdef Q_OS_IOS
++                if (shortcut->action()->id() == QStringLiteral("Show Popup Widget")) {
++                    break;
++                }
++#endif
+                 d->addTouchShortcut(shortcut->action(), shortcut->mode(), shortcut->touchGesture());
+                 break;
+             case KisShortcutConfiguration::NativeGestureType:
+diff --git a/libs/ui/input/kis_input_manager.h b/libs/ui/input/kis_input_manager.h
+index 64776e7..1eb94ba 100644
+--- a/libs/ui/input/kis_input_manager.h
++++ b/libs/ui/input/kis_input_manager.h
+@@ -14,6 +14,7 @@
+ 
+ #include <kis_tool_proxy.h>
+ 
++class QPoint;
+ class QPointF;
+ class QTouchEvent;
+ class KisCanvas2;
+@@ -55,6 +56,13 @@ public:
+ 
+     void registerPopupWidget(KisPopupWidgetInterface *popupWidget);
+ 
++    /**
++     * Toggle the active tool's popup widget at a canvas-local position.
++     * This is used by native platform gestures that do not enter Krita's
++     * regular shortcut matcher.
++     */
++    void togglePopupWidgetAt(const QPoint &canvasPosition);
++
+     void toggleTabletLogger();
+ 
+     /**
+diff --git a/libs/ui/opengl/kis_opengl.cpp b/libs/ui/opengl/kis_opengl.cpp
+index 5f8746e..044fd6c 100644
+--- a/libs/ui/opengl/kis_opengl.cpp
++++ b/libs/ui/opengl/kis_opengl.cpp
+@@ -585,7 +585,7 @@ QOpenGLContext::OpenGLModuleType determineOpenGLImplementation(const RendererInf
+         return QOpenGLContext::LibGL;
+ #else
+     // https://invent.kde.org/szaman/qtbase/-/blob/krita/5.15/src/plugins/platforms/xcb/gl_integrations/xcb_glx/qglxintegration.cpp#L246
+-#if defined(QT_OPENGL_ES_2)
++#if QT_CONFIG(opengles2)
+     return QOpenGLContext::LibGLES;
+ #else
+     return QOpenGLContext::LibGL;
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.cpp b/libs/ui/opengl/kis_opengl_canvas2.cpp
+index 5fc969e..6a9def7 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.cpp
++++ b/libs/ui/opengl/kis_opengl_canvas2.cpp
+@@ -112,7 +112,11 @@ KisOpenGLCanvas2::KisOpenGLCanvas2(KisCanvas2 *canvas,
+ #else
+     setAttribute(Qt::WA_AcceptTouchEvents, true);
+ #endif
++#ifdef Q_OS_IOS
++    setAttribute(Qt::WA_InputMethodEnabled, false);
++#else
+     setAttribute(Qt::WA_InputMethodEnabled, true);
++#endif
+     setAttribute(Qt::WA_DontCreateNativeAncestors, true);
+ 
+     const bool osManagedSurfacePresent = KisPlatformPluginInterfaceFactory::instance()->surfaceColorManagedByOS();
+@@ -546,4 +550,4 @@ QString KisOpenGLCanvas2::currentBitDepthUserReport() const {
+     }
+ 
+     return report;
+-}
+\ No newline at end of file
++}
+diff --git a/libs/ui/opengl/kis_opengl_image_textures.cpp b/libs/ui/opengl/kis_opengl_image_textures.cpp
+index f45e5b0..24ee64a 100644
+--- a/libs/ui/opengl/kis_opengl_image_textures.cpp
++++ b/libs/ui/opengl/kis_opengl_image_textures.cpp
+@@ -6,11 +6,11 @@
+ 
+ #include "opengl/kis_opengl_image_textures.h"
+ 
+-#ifdef QT_OPENGL_ES_2
++#if QT_CONFIG(opengles2)
+ #include <qopengl.h>
+ #endif
+ 
+-#ifndef QT_OPENGL_ES_2
++#if !QT_CONFIG(opengles2)
+ #include <QOpenGLFunctions>
+ #endif
+ #include <QOpenGLContext>
+@@ -65,6 +65,15 @@
+ #define GL_RGBA16_EXT 0x805B
+ #endif
+ 
++// GLES 3 headers need not expose GLES 2 extension token names. These paths
++// remain guarded by the runtime extension checks below.
++#ifndef GL_RGBA32F_EXT
++#define GL_RGBA32F_EXT 0x8814
++#endif
++#ifndef GL_HALF_FLOAT_OES
++#define GL_HALF_FLOAT_OES 0x8D61
++#endif
++
+ //#define DEBUG_BUFFER_REALLOCATION
+ 
+ 
+@@ -566,7 +575,7 @@ void initializeRGBA16FTextures(QOpenGLContext *ctx, KisGLTexturesInfo &texturesI
+ #endif
+ 
+     if (haveBuiltInOpenExr && (KisOpenGL::hasOpenGLES() || KisOpenGL::hasOpenGL3())) {
+-#ifndef QT_OPENGL_ES_2
++#if !QT_CONFIG(opengles2)
+         texturesInfo.internalFormat = GL_RGBA16F;
+         dbgUI << "Using half (GLES or GL3)";
+         texturesInfo.type = GL_HALF_FLOAT;
+@@ -644,7 +653,7 @@ void KisOpenGLImageTextures::updateTextureFormat()
+     if (!(m_image && ctx)) return;
+ 
+     if (!KisOpenGL::hasOpenGLES()) {
+-#ifndef QT_OPENGL_ES_2
++#if !QT_CONFIG(opengles2)
+         m_texturesInfo.internalFormat = GL_RGBA8;
+         m_texturesInfo.type = GL_UNSIGNED_BYTE;
+         m_texturesInfo.format = GL_BGRA;
+@@ -653,7 +662,7 @@ void KisOpenGLImageTextures::updateTextureFormat()
+                 "Unexpected KisOpenGL::hasOpenGLES returned false");
+ #endif
+     } else {
+-#ifdef QT_OPENGL_ES_2
++#if QT_CONFIG(opengles2)
+         m_texturesInfo.internalFormat = GL_RGBA8;
+         m_texturesInfo.type = GL_UNSIGNED_BYTE;
+         m_texturesInfo.format = GL_RGBA;
+@@ -686,7 +695,7 @@ void KisOpenGLImageTextures::updateTextureFormat()
+         }
+         else if (colorDepthId == Float32BitsColorDepthID) {
+             if (KisOpenGL::hasOpenGLES() || KisOpenGL::hasOpenGL3()) {
+-#ifndef QT_OPENGL_ES_2
++#if !QT_CONFIG(opengles2)
+                 m_texturesInfo.internalFormat = GL_RGBA32F;
+                 dbgUI << "Using float (GLES or GL3)";
+                 m_texturesInfo.type = GL_FLOAT;
+@@ -727,7 +736,7 @@ void KisOpenGLImageTextures::updateTextureFormat()
+         }
+         else if (colorDepthId == Integer16BitsColorDepthID) {
+             if (!KisOpenGL::hasOpenGLES()) {
+-#ifndef QT_OPENGL_ES_2
++#if !QT_CONFIG(opengles2)
+                 m_texturesInfo.internalFormat = GL_RGBA16;
+                 m_texturesInfo.type = GL_UNSIGNED_SHORT;
+ 
+@@ -769,7 +778,7 @@ void KisOpenGLImageTextures::updateTextureFormat()
+         // We will convert the colorspace to 16 bits rgba, instead of 8 bits
+         if (colorDepthId == Integer16BitsColorDepthID) {
+             if (!KisOpenGL::hasOpenGLES()) {
+-#ifndef QT_OPENGL_ES_2
++#if !QT_CONFIG(opengles2)
+                 m_texturesInfo.internalFormat = GL_RGBA16;
+                 m_texturesInfo.type = GL_UNSIGNED_SHORT;
+                 // On arm M1, GL_BGRA format is not aligned properly at the driver
+diff --git a/libs/ui/opengl/kis_texture_tile.cpp b/libs/ui/opengl/kis_texture_tile.cpp
+index 77fe3a7..ff78b7b 100644
+--- a/libs/ui/opengl/kis_texture_tile.cpp
++++ b/libs/ui/opengl/kis_texture_tile.cpp
+@@ -34,7 +34,7 @@ void KisTextureTile::setTextureParameters()
+     f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, m_numMipmapLevels);
+ 
+     if ((m_texturesInfo->internalFormat == GL_RGBA8 && m_texturesInfo->format == GL_RGBA)
+-#ifndef QT_OPENGL_ES_2
++#if !QT_CONFIG(opengles2)
+         || (m_texturesInfo->internalFormat == GL_RGBA16 && m_texturesInfo->format == GL_RGBA)
+ #endif
+         || (m_texturesInfo->internalFormat == GL_RGBA16_EXT && m_texturesInfo->format == GL_RGBA)
+diff --git a/libs/widgetutils/CMakeLists.txt b/libs/widgetutils/CMakeLists.txt
+index 6d44ab7..6371287 100644
+--- a/libs/widgetutils/CMakeLists.txt
++++ b/libs/widgetutils/CMakeLists.txt
+@@ -121,6 +121,7 @@ ki18n_wrap_ui(kritawidgetutils_LIB_SRCS
+ )
+ 
+ qt_add_resources(kritawidgetutils_LIB_SRCS xmlgui/kxmlgui.qrc)
++krita_register_ios_static_resource(kxmlgui ":/kxmlgui5/ui_standards.xmlgui" xmlgui/kxmlgui.qrc)
+ 
+ kis_add_library(kritawidgetutils SHARED ${kritawidgetutils_LIB_SRCS})
+ 
+@@ -136,7 +137,7 @@ if (HAVE_DBUS)
+    set (KRITA_WIDGET_UTILS_EXTRA_LIBS ${KRITA_WIDGET_UTILS_EXTRA_LIBS} Qt${QT_MAJOR_VERSION}::DBus)
+ endif ()
+ 
+-if (APPLE)
++if (APPLE AND NOT IOS)
+     find_library(FOUNDATION_LIBRARY Foundation)
+     set(KRITA_WIDGET_UTILS_EXTRA_LIBS ${KRITA_WIDGET_UTILS_EXTRA_LIBS} ${FOUNDATION_LIBRARY})
+     target_include_directories(kritawidgetutils PRIVATE
+diff --git a/libs/widgetutils/xmlgui/kcheckaccelerators.cpp b/libs/widgetutils/xmlgui/kcheckaccelerators.cpp
+index 2725af0..75aa684 100644
+--- a/libs/widgetutils/xmlgui/kcheckaccelerators.cpp
++++ b/libs/widgetutils/xmlgui/kcheckaccelerators.cpp
+@@ -167,13 +167,15 @@ bool KisKCheckAccelerators::eventFilter(QObject *obj, QEvent *e)
+             }
+ 
+             //kWarning()<<KGlobal::activeComponent().catalogName()<<text;
+-            if (copyWidgetTextCommand.isEmpty()) {
+-                QClipboard *clipboard = QApplication::clipboard();
+-                clipboard->setText(text);
+-            } else {
++#if QT_CONFIG(process)
++            if (!copyWidgetTextCommand.isEmpty()) {
+                 QProcess *script = new QProcess(this);
+                 script->start(copyWidgetTextCommand.arg(text, QFile::decodeName(KLocalizedString::applicationDomain())), QStringList());
+                 connect(script, SIGNAL(finished(int,QProcess::ExitStatus)), script, SLOT(deleteLater()));
++            } else
++#endif
++            {
++                QApplication::clipboard()->setText(text);
+             }
+             e->accept();
+             return true;
+diff --git a/plugins/dockers/advancedcolorselector/kis_color_history.cpp b/plugins/dockers/advancedcolorselector/kis_color_history.cpp
+index a3971b1..8796160 100644
+--- a/plugins/dockers/advancedcolorselector/kis_color_history.cpp
++++ b/plugins/dockers/advancedcolorselector/kis_color_history.cpp
+@@ -17,6 +17,7 @@
+ #include <QList>
+ #include <kis_icon.h>
+ #include "KisDocument.h"
++#include "KisView.h"
+ #include "kis_config_notifier.h"
+ 
+ Q_GLOBAL_STATIC(KisColorHistoryNotifier, s_color_history_change_notifier);
+@@ -67,18 +68,23 @@ void KisColorHistory::setCanvas(KisCanvas2 *canvas)
+         m_document->colorHistoryModel()->disconnect(this);
+     }
+ 
+-    m_resourceProvider = canvas->imageView()->resourceProvider();
+-    m_document = canvas->viewManager()->document();
++    KisView *imageView = canvas->imageView();
++    m_resourceProvider = imageView ? imageView->resourceProvider() : nullptr;
++    m_document = imageView ? imageView->document() : nullptr;
+ 
+     setColors(colorHistoryModel()->colorList());
+ 
+-    connect(m_resourceProvider, SIGNAL(sigFGColorUsed(KoColor)),
+-            this, SLOT(addColorToHistory(KoColor)), Qt::UniqueConnection);
++    if (m_resourceProvider) {
++        connect(m_resourceProvider, SIGNAL(sigFGColorUsed(KoColor)),
++                this, SLOT(addColorToHistory(KoColor)), Qt::UniqueConnection);
+ 
+-    // Messy, but this whole plugin should be removed shortly in favour of the wide gamut selector.
+-    // We only really need this so the plugin will respond to the color history being cleared in the wide gamut selector.
+-    connect(m_resourceProvider->colorHistoryModel(), SIGNAL(sigReset()), this, SLOT(colorHistoryChanged()));
+-    connect(m_document->colorHistoryModel(), SIGNAL(sigReset()), this, SLOT(colorHistoryChanged()));
++        // Messy, but this whole plugin should be removed shortly in favour of the wide gamut selector.
++        // We only really need this so the plugin will respond to the color history being cleared in the wide gamut selector.
++        connect(m_resourceProvider->colorHistoryModel(), SIGNAL(sigReset()), this, SLOT(colorHistoryChanged()));
++    }
++    if (m_document) {
++        connect(m_document->colorHistoryModel(), SIGNAL(sigReset()), this, SLOT(colorHistoryChanged()));
++    }
+ }
+ 
+ KisColorSelectorBase *KisColorHistory::createPopup() const
+diff --git a/plugins/dockers/advancedcolorselector/kis_color_selector_triangle.cpp b/plugins/dockers/advancedcolorselector/kis_color_selector_triangle.cpp
+index c4bc7e9..4886260 100644
+--- a/plugins/dockers/advancedcolorselector/kis_color_selector_triangle.cpp
++++ b/plugins/dockers/advancedcolorselector/kis_color_selector_triangle.cpp
+@@ -10,6 +10,7 @@
+ #include <QMouseEvent>
+ 
+ #include <cmath>
++#include <limits>
+ 
+ #include "KoColorSpace.h"
+ 
+@@ -143,23 +144,33 @@ int KisColorSelectorTriangle::triangleHeight() const
+ 
+ KoColor KisColorSelectorTriangle::colorAt(float x, float y) const
+ {
++    if (!std::isfinite(x) || !std::isfinite(y)) {
++        return KoColor::createTransparent(colorSpace());
++    }
++
+     Q_ASSERT(x>=0 && x<=(triangleWidth() + 1));
+     Q_ASSERT(y>=0 && y<=triangleHeight());
+ 
+-    int triangleHeight = this->triangleHeight();
+-    int horizontalLineLength = y*(2./sqrt(3.));
+-    int horizontalLineStart = triangleWidth()/2.-horizontalLineLength/2.;
+-    int horizontalLineEnd = horizontalLineStart+horizontalLineLength;
++    const int triangleHeight = this->triangleHeight();
++    if (triangleHeight <= 0) {
++        return KoColor::createTransparent(colorSpace());
++    }
++
++    const qreal horizontalLineLength = qreal(y) * (2.0 / sqrt(3.0));
++    const qreal horizontalLineStart = triangleWidth() / 2.0 - horizontalLineLength / 2.0;
++    const qreal horizontalLineEnd = horizontalLineStart + horizontalLineLength;
+ 
+     if(x<horizontalLineStart || x>horizontalLineEnd || y>triangleHeight)
+         return KoColor::createTransparent(colorSpace());
+ 
+-    qreal relativeX = x-horizontalLineStart;
++    const qreal relativeX = qreal(x) - horizontalLineStart;
++    const qreal value = qBound(0.0, qreal(y) / qreal(triangleHeight), 1.0);
++    const qreal saturation = horizontalLineLength > std::numeric_limits<qreal>::epsilon()
++        ? qBound(0.0, relativeX / horizontalLineLength, 1.0)
++        : 0.0;
++    const qreal hue = std::isfinite(m_hue) ? m_hue : 0.0;
+ 
+-    qreal value = (y)/qreal(triangleHeight);
+-    qreal saturation = relativeX/qreal(horizontalLineLength);
+-
+-    return m_parent->converter()->fromHsvF(m_hue, saturation, value);
++    return m_parent->converter()->fromHsvF(hue, saturation, value);
+ }
+ 
+ QPoint KisColorSelectorTriangle::widgetToTriangleCoordinates(const QPoint &point) const
+@@ -177,4 +188,3 @@ QPoint KisColorSelectorTriangle::triangleToWidgetCoordinates(const QPoint &point
+     QPoint ret=triangleTopLeft+point;
+     return ret;
+ }
+-
+diff --git a/plugins/dockers/artisticcolorselector/forms/wdgArtisticColorSelector.ui b/plugins/dockers/artisticcolorselector/forms/wdgArtisticColorSelector.ui
+index 2086476..ad9a126 100644
+--- a/plugins/dockers/artisticcolorselector/forms/wdgArtisticColorSelector.ui
++++ b/plugins/dockers/artisticcolorselector/forms/wdgArtisticColorSelector.ui
+@@ -105,7 +105,7 @@
+     </layout>
+    </item>
+    <item>
+-    <widget class="KisColorSelector" name="colorSelector" native="true">
++    <widget class="KisArtisticColorSelector" name="colorSelector" native="true">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+        <horstretch>0</horstretch>
+@@ -123,7 +123,7 @@
+    <header>KisPopupButton.h</header>
+   </customwidget>
+   <customwidget>
+-   <class>KisColorSelector</class>
++   <class>KisArtisticColorSelector</class>
+    <extends>QWidget</extends>
+    <header>kis_color_selector.h</header>
+    <container>1</container>
+diff --git a/plugins/dockers/artisticcolorselector/kis_color_selector.cpp b/plugins/dockers/artisticcolorselector/kis_color_selector.cpp
+index 0c4e647..2d8f2c2 100644
+--- a/plugins/dockers/artisticcolorselector/kis_color_selector.cpp
++++ b/plugins/dockers/artisticcolorselector/kis_color_selector.cpp
+@@ -25,7 +25,7 @@
+ 
+ //#define DEBUG_ARC_SELECTOR
+ 
+-KisColorSelector::KisColorSelector(QWidget* parent, KisColor::Type type)
++KisArtisticColorSelector::KisArtisticColorSelector(QWidget* parent, KisColor::Type type)
+     : QWidget(parent)
+     , m_colorConverter(KisDisplayColorConverter::dumbConverterInstance())
+     , m_colorSpace(type)
+@@ -53,11 +53,11 @@ KisColorSelector::KisColorSelector(QWidget* parent, KisColor::Type type)
+     selectColor(KisColor(Qt::red, m_colorConverter, KisColor::HSY, m_lumaR, m_lumaG, m_lumaB, m_lumaGamma));
+ 
+     using namespace std::placeholders; // For _1 placeholder
+-    auto function = std::bind(&KisColorSelector::slotUpdateColorAndPreview, this, _1);
++    auto function = std::bind(&KisArtisticColorSelector::slotUpdateColorAndPreview, this, _1);
+     m_updateColorCompressor.reset(new ColorCompressorType(25 /* ms */, function));
+ }
+ 
+-void KisColorSelector::setColorSpace(KisColor::Type type)
++void KisArtisticColorSelector::setColorSpace(KisColor::Type type)
+ {
+     m_colorSpace    = type;
+     m_selectedColor = KisColor(m_selectedColor, m_colorConverter, m_colorSpace, m_lumaR, m_lumaG, m_lumaB, m_lumaGamma);
+@@ -66,13 +66,13 @@ void KisColorSelector::setColorSpace(KisColor::Type type)
+     m_isDirtyWheel = true;
+ 
+ #ifdef DEBUG_ARC_SELECTOR
+-        dbgPlugins << "KisColorSelector::setColorSpace: set to:" << m_colorSpace;
++        dbgPlugins << "KisArtisticColorSelector::setColorSpace: set to:" << m_colorSpace;
+ #endif
+ 
+         update();
+ }
+ 
+-void KisColorSelector::setColorConverter(KisDisplayColorConverter *colorConverter)
++void KisArtisticColorSelector::setColorConverter(KisDisplayColorConverter *colorConverter)
+ {
+     m_colorConverter = colorConverter;
+ 
+@@ -83,7 +83,7 @@ void KisColorSelector::setColorConverter(KisDisplayColorConverter *colorConverte
+     update();
+ }
+ 
+-void KisColorSelector::setNumLightPieces(int num)
++void KisArtisticColorSelector::setNumLightPieces(int num)
+ {
+     num = qBound(MIN_NUM_LIGHT_PIECES, num, MAX_NUM_LIGHT_PIECES);
+ 
+@@ -95,7 +95,7 @@ void KisColorSelector::setNumLightPieces(int num)
+     update();
+ }
+ 
+-void KisColorSelector::setNumPieces(int num)
++void KisArtisticColorSelector::setNumPieces(int num)
+ {
+     num = qBound(MIN_NUM_HUE_PIECES, num, MAX_NUM_HUE_PIECES);
+ 
+@@ -107,7 +107,7 @@ void KisColorSelector::setNumPieces(int num)
+     update();
+ }
+ 
+-void KisColorSelector::setNumRings(int num)
++void KisArtisticColorSelector::setNumRings(int num)
+ {
+     num = qBound(MIN_NUM_SATURATION_RINGS, num, MAX_NUM_SATURATION_RINGS);
+ 
+@@ -119,7 +119,7 @@ void KisColorSelector::setNumRings(int num)
+     update();
+ }
+ 
+-void KisColorSelector::selectColor(const KisColor& color)
++void KisArtisticColorSelector::selectColor(const KisColor& color)
+ {
+     m_selectedColor      = KisColor(color, m_colorConverter, m_colorSpace, m_lumaR, m_lumaG, m_lumaB, m_lumaGamma);
+     m_selectedPiece      = getHueIndex(m_selectedColor.getH() * PI2);
+@@ -128,7 +128,7 @@ void KisColorSelector::selectColor(const KisColor& color)
+     update();
+ }
+ 
+-void KisColorSelector::setFgColor(const KoColor& fgColor)
++void KisArtisticColorSelector::setFgColor(const KoColor& fgColor)
+ {
+     if (!m_widgetUpdatesSelf) {
+         m_fgColor = KisColor(fgColor, m_colorConverter, m_colorSpace, m_lumaR, m_lumaG, m_lumaB, m_lumaGamma);
+@@ -138,12 +138,12 @@ void KisColorSelector::setFgColor(const KoColor& fgColor)
+         m_isDirtyLightStrip = true;
+         m_isDirtyColorPreview = true;
+ #ifdef DEBUG_ARC_SELECTOR
+-        dbgPlugins << "KisColorSelector::setFgColor: m_fgColor set to:"
++        dbgPlugins << "KisArtisticColorSelector::setFgColor: m_fgColor set to:"
+                    << "H:" << m_fgColor.getH()
+                    << "S:" << m_fgColor.getS()
+                    << "X:" << m_fgColor.getX();
+ 
+-        dbgPlugins << "KisColorSelector::setFgColor: m_selectedColor set to:"
++        dbgPlugins << "KisArtisticColorSelector::setFgColor: m_selectedColor set to:"
+                    << "H:" << m_selectedColor.getH()
+                    << "S:" << m_selectedColor.getS()
+                    << "X:" << m_selectedColor.getX();
+@@ -152,7 +152,7 @@ void KisColorSelector::setFgColor(const KoColor& fgColor)
+     }
+ }
+ 
+-void KisColorSelector::setBgColor(const KoColor& bgColor)
++void KisArtisticColorSelector::setBgColor(const KoColor& bgColor)
+ {
+     if (!m_widgetUpdatesSelf) {
+         m_bgColor = KisColor(bgColor, m_colorConverter, m_colorSpace, m_lumaR, m_lumaG, m_lumaB, m_lumaGamma);
+@@ -160,7 +160,7 @@ void KisColorSelector::setBgColor(const KoColor& bgColor)
+         m_isDirtyColorPreview = true;
+ 
+ #ifdef DEBUG_ARC_SELECTOR
+-        dbgPlugins << "KisColorSelector::setBgColor: m_bgColor set to:"
++        dbgPlugins << "KisArtisticColorSelector::setBgColor: m_bgColor set to:"
+                    << "H:" << m_bgColor.getH()
+                    << "S:" << m_bgColor.getS()
+                    << "X:" << m_bgColor.getX();
+@@ -169,7 +169,7 @@ void KisColorSelector::setBgColor(const KoColor& bgColor)
+     }
+ }
+ 
+-void KisColorSelector::setLight(qreal light)
++void KisArtisticColorSelector::setLight(qreal light)
+ {
+     m_selectedColor.setX(qBound(0.0, light, 1.0));
+     m_selectedLightPiece = getLightIndex(m_selectedColor.getX());
+@@ -177,7 +177,7 @@ void KisColorSelector::setLight(qreal light)
+     update();
+ }
+ 
+-void KisColorSelector::setLumaCoefficients(qreal lR, qreal lG, qreal lB, qreal lGamma)
++void KisArtisticColorSelector::setLumaCoefficients(qreal lR, qreal lG, qreal lB, qreal lGamma)
+ {
+     m_lumaR = lR;
+     m_lumaG = lG;
+@@ -190,14 +190,14 @@ void KisColorSelector::setLumaCoefficients(qreal lR, qreal lG, qreal lB, qreal l
+     m_isDirtyWheel = true;
+ 
+ #ifdef DEBUG_ARC_SELECTOR
+-        dbgPlugins << "KisColorSelector::setLumaCoefficients: " << m_lumaR
++        dbgPlugins << "KisArtisticColorSelector::setLumaCoefficients: " << m_lumaR
+                    << " " << m_lumaG << " " << m_lumaB << " " << m_lumaGamma;
+ #endif
+ 
+     update();
+ }
+ 
+-void KisColorSelector::setInverseSaturation(bool inverse)
++void KisArtisticColorSelector::setInverseSaturation(bool inverse)
+ {
+     if (m_inverseSaturation != inverse) {
+         m_selectedRing      = (getNumRings()-1) - m_selectedRing;
+@@ -207,7 +207,7 @@ void KisColorSelector::setInverseSaturation(bool inverse)
+     }
+ }
+ 
+-void KisColorSelector::setGamutMask(KoGamutMaskSP gamutMask)
++void KisArtisticColorSelector::setGamutMask(KoGamutMaskSP gamutMask)
+ {
+     if (!gamutMask) {
+         return;
+@@ -225,7 +225,7 @@ void KisColorSelector::setGamutMask(KoGamutMaskSP gamutMask)
+     update();
+ }
+ 
+-void KisColorSelector::setDirty()
++void KisArtisticColorSelector::setDirty()
+ {
+     m_isDirtyWheel = true;
+     m_isDirtyLightStrip = true;
+@@ -235,18 +235,18 @@ void KisColorSelector::setDirty()
+     update();
+ }
+ 
+-KoGamutMaskSP KisColorSelector::gamutMask()
++KoGamutMaskSP KisArtisticColorSelector::gamutMask()
+ {
+     return m_currentGamutMask;
+ }
+ 
+-bool KisColorSelector::gamutMaskOn()
++bool KisArtisticColorSelector::gamutMaskOn()
+ {
+     return m_gamutMaskOn;
+ }
+ 
+ 
+-void KisColorSelector::setGamutMaskOn(bool gamutMaskOn)
++void KisArtisticColorSelector::setGamutMaskOn(bool gamutMaskOn)
+ {
+     if (m_currentGamutMask) {
+         m_gamutMaskOn = gamutMaskOn;
+@@ -261,7 +261,7 @@ void KisColorSelector::setGamutMaskOn(bool gamutMaskOn)
+     }
+ }
+ 
+-void KisColorSelector::setEnforceGamutMask(bool enforce)
++void KisArtisticColorSelector::setEnforceGamutMask(bool enforce)
+ {
+     m_enforceGamutMask = enforce;
+     m_isDirtyGamutMask = true;
+@@ -269,7 +269,7 @@ void KisColorSelector::setEnforceGamutMask(bool enforce)
+     update();
+ }
+ 
+-QPointF KisColorSelector::mapCoordToView(const QPointF& pt, const QRectF& viewRect) const
++QPointF KisArtisticColorSelector::mapCoordToView(const QPointF& pt, const QRectF& viewRect) const
+ {
+     qreal w = viewRect.width()  / 2.0;
+     qreal h = viewRect.height() / 2.0;
+@@ -280,7 +280,7 @@ QPointF KisColorSelector::mapCoordToView(const QPointF& pt, const QRectF& viewRe
+     return QPointF(x*w, y*h);
+ }
+ 
+-QPointF KisColorSelector::mapCoordToUnit(const QPointF& pt, const QRectF& viewRect) const
++QPointF KisArtisticColorSelector::mapCoordToUnit(const QPointF& pt, const QRectF& viewRect) const
+ {
+     qreal w = viewRect.width()  / 2.0;
+     qreal h = viewRect.height() / 2.0;
+@@ -289,7 +289,7 @@ QPointF KisColorSelector::mapCoordToUnit(const QPointF& pt, const QRectF& viewRe
+     return QPointF(x/w, y/h);
+ }
+ 
+-QPointF KisColorSelector::mapColorToUnit(const KisColor& color, bool invertSaturation) const
++QPointF KisArtisticColorSelector::mapColorToUnit(const KisColor& color, bool invertSaturation) const
+ {
+     qreal radius;
+     if (invertSaturation && m_inverseSaturation) {
+@@ -305,12 +305,12 @@ QPointF KisColorSelector::mapColorToUnit(const KisColor& color, bool invertSatur
+     return QPointF(x,y);
+ }
+ 
+-KisColorSelector::Radian KisColorSelector::mapCoordToAngle(qreal x, qreal y) const
++KisArtisticColorSelector::Radian KisArtisticColorSelector::mapCoordToAngle(qreal x, qreal y) const
+ {
+     qreal angle = std::atan2(-y, -x);
+ 
+ #ifdef DEBUG_ARC_SELECTOR
+-    dbgPlugins << "KisColorSelector::mapCoordToAngle: "
++    dbgPlugins << "KisArtisticColorSelector::mapCoordToAngle: "
+                << "X:" << x
+                << "Y:" << y
+                << "angle:" << angle;
+@@ -319,7 +319,7 @@ KisColorSelector::Radian KisColorSelector::mapCoordToAngle(qreal x, qreal y) con
+     return angle;
+ }
+ 
+-QPointF KisColorSelector::mapHueToAngle(qreal hue) const
++QPointF KisArtisticColorSelector::mapHueToAngle(qreal hue) const
+ {
+     qreal angle = hue * 2.0 * M_PI - M_PI;
+     qreal x = std::cos(angle);
+@@ -329,7 +329,7 @@ QPointF KisColorSelector::mapHueToAngle(qreal hue) const
+ }
+ 
+ 
+-qint8 KisColorSelector::getLightIndex(const QPointF& pt) const
++qint8 KisArtisticColorSelector::getLightIndex(const QPointF& pt) const
+ {
+     if (m_lightStripArea.contains(pt.toPoint(), true)) {
+         qreal t = (pt.y() - m_lightStripArea.y()) / qreal(m_lightStripArea.height());
+@@ -339,13 +339,13 @@ qint8 KisColorSelector::getLightIndex(const QPointF& pt) const
+     return -1;
+ }
+ 
+-qint8 KisColorSelector::getLightIndex(qreal light) const
++qint8 KisArtisticColorSelector::getLightIndex(qreal light) const
+ {
+     light = qreal(1) - qBound(qreal(0), light, qreal(1));
+     return qint8(qRound(light * (getNumLightPieces()-1)));
+ }
+ 
+-qreal KisColorSelector::getLight(const QPointF& pt) const
++qreal KisArtisticColorSelector::getLight(const QPointF& pt) const
+ {
+     qint8 clickedLightPiece = getLightIndex(pt);
+ 
+@@ -359,27 +359,27 @@ qreal KisColorSelector::getLight(const QPointF& pt) const
+     return qreal(0);
+ }
+ 
+-qint8 KisColorSelector::getHueIndex(Radian hue) const
++qint8 KisArtisticColorSelector::getHueIndex(Radian hue) const
+ {
+     qreal partSize = 1.0 / qreal(getNumPieces());
+     return qint8(qRound(hue.scaled(0.0, 1.0) / partSize) % getNumPieces());
+ }
+ 
+-qreal KisColorSelector::getHue(int hueIdx, Radian shift) const
++qreal KisArtisticColorSelector::getHue(int hueIdx, Radian shift) const
+ {
+     Radian hue = (qreal(hueIdx) / qreal(getNumPieces())) * PI2;
+     hue += shift;
+     return hue.scaled(0.0, 1.0);
+ }
+ 
+-qint8 KisColorSelector::getSaturationIndex(qreal saturation) const
++qint8 KisArtisticColorSelector::getSaturationIndex(qreal saturation) const
+ {
+     saturation = qBound(qreal(0), saturation, qreal(1));
+     saturation = m_inverseSaturation ? (qreal(1) - saturation) : saturation;
+     return qint8(saturation * qreal(getNumRings() - 1));
+ }
+ 
+-qint8 KisColorSelector::getSaturationIndex(const QPointF& pt) const
++qint8 KisArtisticColorSelector::getSaturationIndex(const QPointF& pt) const
+ {
+     qreal length = std::sqrt(pt.x()*pt.x() + pt.y()*pt.y());
+ 
+@@ -391,13 +391,13 @@ qint8 KisColorSelector::getSaturationIndex(const QPointF& pt) const
+     return -1;
+ }
+ 
+-qreal KisColorSelector::getSaturation(int saturationIdx) const
++qreal KisArtisticColorSelector::getSaturation(int saturationIdx) const
+ {
+     qreal sat = qreal(saturationIdx) / qreal(getNumRings()-1);
+     return m_inverseSaturation ? (1.0 - sat) : sat;
+ }
+ 
+-void KisColorSelector::recalculateAreas(quint8 numLightPieces)
++void KisArtisticColorSelector::recalculateAreas(quint8 numLightPieces)
+ {
+     qreal LIGHT_STRIP_RATIO = 0.075;
+ 
+@@ -443,7 +443,7 @@ void KisColorSelector::recalculateAreas(quint8 numLightPieces)
+     m_isDirtyColorPreview = true;
+ }
+ 
+-void KisColorSelector::recalculateRings(quint8 numRings, quint8 numPieces)
++void KisArtisticColorSelector::recalculateRings(quint8 numRings, quint8 numPieces)
+ {
+     m_colorRings.resize(numRings);
+     m_numPieces = numPieces;
+@@ -460,7 +460,7 @@ void KisColorSelector::recalculateRings(quint8 numRings, quint8 numPieces)
+     m_isDirtyWheel = true;
+ }
+ 
+-void KisColorSelector::createRing(ColorRing& ring, quint8 numPieces, qreal innerRadius, qreal outerRadius)
++void KisArtisticColorSelector::createRing(ColorRing& ring, quint8 numPieces, qreal innerRadius, qreal outerRadius)
+ {
+     int numParts = qMax<int>(numPieces, 1);
+ 
+@@ -486,7 +486,7 @@ void KisColorSelector::createRing(ColorRing& ring, quint8 numPieces, qreal inner
+     }
+ }
+ 
+-bool KisColorSelector::colorIsClear(const KisColor &color)
++bool KisArtisticColorSelector::colorIsClear(const KisColor &color)
+ {
+     if (m_gamutMaskOn && m_currentGamutMask) {
+ 
+@@ -509,10 +509,10 @@ bool KisColorSelector::colorIsClear(const KisColor &color)
+ }
+ 
+ 
+-void KisColorSelector::requestUpdateColorAndPreview(const KisColor &color, Acs::ColorRole role)
++void KisArtisticColorSelector::requestUpdateColorAndPreview(const KisColor &color, Acs::ColorRole role)
+ {
+ #ifdef DEBUG_ARC_SELECTOR
+-    dbgPlugins << "KisColorSelector::requestUpdateColorAndPreview: requesting update to: "
++    dbgPlugins << "KisArtisticColorSelector::requestUpdateColorAndPreview: requesting update to: "
+                << "H:" << color.getH()
+                << "S:" << color.getS()
+                << "X:" << color.getX();
+@@ -521,7 +521,7 @@ void KisColorSelector::requestUpdateColorAndPreview(const KisColor &color, Acs::
+     m_updateColorCompressor->start(qMakePair(color, role));
+ }
+ 
+-void KisColorSelector::slotUpdateColorAndPreview(QPair<KisColor, Acs::ColorRole> color)
++void KisArtisticColorSelector::slotUpdateColorAndPreview(QPair<KisColor, Acs::ColorRole> color)
+ {
+     const bool selectAsFgColor = color.second == Acs::Foreground;
+ 
+@@ -538,7 +538,7 @@ void KisColorSelector::slotUpdateColorAndPreview(QPair<KisColor, Acs::ColorRole>
+     m_isDirtyWheel = true;
+ 
+ #ifdef DEBUG_ARC_SELECTOR
+-    dbgPlugins << "KisColorSelector::slotUpdateColorAndPreview: m_selectedColor set to:"
++    dbgPlugins << "KisArtisticColorSelector::slotUpdateColorAndPreview: m_selectedColor set to:"
+                << "H:" << m_selectedColor.getH()
+                << "S:" << m_selectedColor.getS()
+                << "X:" << m_selectedColor.getX();
+@@ -548,7 +548,7 @@ void KisColorSelector::slotUpdateColorAndPreview(QPair<KisColor, Acs::ColorRole>
+     else                 { Q_EMIT sigBgColorChanged(m_selectedColor); }
+ }
+ 
+-void KisColorSelector::drawRing(QPainter& painter, KisColorSelector::ColorRing& ring, const QRect& rect)
++void KisArtisticColorSelector::drawRing(QPainter& painter, KisArtisticColorSelector::ColorRing& ring, const QRect& rect)
+ {
+     painter.save();
+     painter.setRenderHint(QPainter::Antialiasing, true);
+@@ -616,7 +616,7 @@ void KisColorSelector::drawRing(QPainter& painter, KisColorSelector::ColorRing&
+     painter.restore();
+ }
+ 
+-void KisColorSelector::drawOutline(QPainter& painter, const QRect& rect)
++void KisArtisticColorSelector::drawOutline(QPainter& painter, const QRect& rect)
+ {
+     painter.save();
+ 
+@@ -677,7 +677,7 @@ void KisColorSelector::drawOutline(QPainter& painter, const QRect& rect)
+     painter.restore();
+ }
+ 
+-void KisColorSelector::drawLightStrip(QPainter& painter, const QRect& rect)
++void KisArtisticColorSelector::drawLightStrip(QPainter& painter, const QRect& rect)
+ {
+     qreal    penSize    = qreal(qMin(QWidget::width(), QWidget::height())) / 200.0;
+     qreal    penSizeSmall = penSize / 1.2;
+@@ -820,7 +820,7 @@ void KisColorSelector::drawLightStrip(QPainter& painter, const QRect& rect)
+     painter.restore();
+ }
+ 
+-void KisColorSelector::drawBlip(QPainter& painter, const QRect& rect)
++void KisArtisticColorSelector::drawBlip(QPainter& painter, const QRect& rect)
+ {
+     painter.save();
+ 
+@@ -832,7 +832,7 @@ void KisColorSelector::drawBlip(QPainter& painter, const QRect& rect)
+     QPointF fgColorPos = mapColorToUnit(m_fgColor);
+ 
+ #ifdef DEBUG_ARC_SELECTOR
+-    dbgPlugins << "KisColorSelector::drawBlip: "
++    dbgPlugins << "KisArtisticColorSelector::drawBlip: "
+                << "colorPoint H:" << m_fgColor.getH() << " S:" << m_fgColor.getS()
+                << "-> coord X:" << fgColorPos.x() << " Y:" << fgColorPos.y();
+ #endif
+@@ -846,7 +846,7 @@ void KisColorSelector::drawBlip(QPainter& painter, const QRect& rect)
+     painter.restore();
+ }
+ 
+-void KisColorSelector::drawGamutMaskShape(QPainter &painter, const QRect &rect)
++void KisArtisticColorSelector::drawGamutMaskShape(QPainter &painter, const QRect &rect)
+ {
+     painter.save();
+     painter.setRenderHint(QPainter::Antialiasing, true);
+@@ -871,7 +871,7 @@ void KisColorSelector::drawGamutMaskShape(QPainter &painter, const QRect &rect)
+     painter.restore();
+ }
+ 
+-void KisColorSelector::drawColorPreview(QPainter &painter, const QRect &rect)
++void KisArtisticColorSelector::drawColorPreview(QPainter &painter, const QRect &rect)
+ {
+     painter.save();
+     painter.setRenderHint(QPainter::Antialiasing, true);
+@@ -895,7 +895,7 @@ void KisColorSelector::drawColorPreview(QPainter &painter, const QRect &rect)
+     painter.restore();
+ }
+ 
+-void KisColorSelector::paintEvent(QPaintEvent* /*event*/)
++void KisArtisticColorSelector::paintEvent(QPaintEvent* /*event*/)
+ {
+     QPainter wdgPainter(this);
+ 
+@@ -956,11 +956,11 @@ void KisColorSelector::paintEvent(QPaintEvent* /*event*/)
+     drawBlip(wdgPainter, m_renderArea);
+ }
+ 
+-void KisColorSelector::mousePressEvent(QMouseEvent* event)
++void KisArtisticColorSelector::mousePressEvent(QMouseEvent* event)
+ {
+     m_widgetUpdatesSelf = true;
+ #ifdef DEBUG_ARC_SELECTOR
+-    dbgPlugins << "KisColorSelector::mousePressEvent: m_widgetUpdatesSelf = true";
++    dbgPlugins << "KisArtisticColorSelector::mousePressEvent: m_widgetUpdatesSelf = true";
+ #endif
+ 
+     m_clickPos       = mapCoordToUnit(event->localPos(), m_renderArea);
+@@ -988,7 +988,7 @@ void KisColorSelector::mousePressEvent(QMouseEvent* event)
+                          );
+ 
+ #ifdef DEBUG_ARC_SELECTOR
+-    dbgPlugins << "KisColorSelector::mousePressEvent: picked color: "
++    dbgPlugins << "KisArtisticColorSelector::mousePressEvent: picked color: "
+                << "H:" << color.getH()
+                << "S:" << color.getS()
+                << "X:" << color.getX();
+@@ -1005,7 +1005,7 @@ void KisColorSelector::mousePressEvent(QMouseEvent* event)
+     }
+ }
+ 
+-void KisColorSelector::mouseMoveEvent(QMouseEvent* event)
++void KisArtisticColorSelector::mouseMoveEvent(QMouseEvent* event)
+ {
+     QPointF dragPos = mapCoordToUnit(event->localPos(), m_renderArea);
+     qint8   clickedLightPiece = getLightIndex(event->localPos());
+@@ -1037,7 +1037,7 @@ void KisColorSelector::mouseMoveEvent(QMouseEvent* event)
+     update();
+ }
+ 
+-void KisColorSelector::mouseReleaseEvent(QMouseEvent* /*event*/)
++void KisArtisticColorSelector::mouseReleaseEvent(QMouseEvent* /*event*/)
+ {
+     Acs::ColorRole colorRole = Acs::buttonsToRole(Qt::NoButton, m_pressedButtons);
+ 
+@@ -1070,26 +1070,26 @@ void KisColorSelector::mouseReleaseEvent(QMouseEvent* /*event*/)
+ 
+     m_widgetUpdatesSelf = false;
+ #ifdef DEBUG_ARC_SELECTOR
+-    dbgPlugins << "KisColorSelector::ReleasePressEvent: m_widgetUpdatesSelf = false";
++    dbgPlugins << "KisArtisticColorSelector::ReleasePressEvent: m_widgetUpdatesSelf = false";
+ #endif
+ 
+     update();
+ }
+ 
+-void KisColorSelector::resizeEvent(QResizeEvent* /*event*/)
++void KisArtisticColorSelector::resizeEvent(QResizeEvent* /*event*/)
+ {
+     recalculateAreas(quint8(getNumLightPieces()));
+ }
+ 
+-void KisColorSelector::leaveEvent(QEvent* /*e*/)
++void KisArtisticColorSelector::leaveEvent(QEvent* /*e*/)
+ {
+     m_widgetUpdatesSelf = false;
+ #ifdef DEBUG_ARC_SELECTOR
+-    dbgPlugins << "KisColorSelector::leaveEvent: m_widgetUpdatesSelf = false";
++    dbgPlugins << "KisArtisticColorSelector::leaveEvent: m_widgetUpdatesSelf = false";
+ #endif
+ }
+ 
+-void KisColorSelector::saveSettings()
++void KisArtisticColorSelector::saveSettings()
+ {
+     KisConfig cfg(false);
+     cfg.writeEntry("ArtColorSel.ColorSpace" , qint32(m_colorSpace));
+@@ -1119,7 +1119,7 @@ void KisColorSelector::saveSettings()
+     cfg.writeEntry("ArtColorSel.enforceGamutMask", m_enforceGamutMask);
+ }
+ 
+-void KisColorSelector::loadSettings()
++void KisArtisticColorSelector::loadSettings()
+ {
+     KisConfig cfg(true);
+ 
+@@ -1156,32 +1156,32 @@ void KisColorSelector::loadSettings()
+     update();
+ }
+ 
+-void KisColorSelector::setDefaultHueSteps(int num)
++void KisArtisticColorSelector::setDefaultHueSteps(int num)
+ {
+     num = qBound(MIN_NUM_HUE_PIECES, num, MAX_NUM_HUE_PIECES);
+     m_defaultHueSteps = num;
+ }
+ 
+-void KisColorSelector::setDefaultSaturationSteps(int num)
++void KisArtisticColorSelector::setDefaultSaturationSteps(int num)
+ {
+     num = qBound(MIN_NUM_SATURATION_RINGS, num, MAX_NUM_SATURATION_RINGS);
+     m_defaultSaturationSteps = num;
+ }
+ 
+-void KisColorSelector::setDefaultValueScaleSteps(int num)
++void KisArtisticColorSelector::setDefaultValueScaleSteps(int num)
+ {
+     num = qBound(MIN_NUM_LIGHT_PIECES, num, MAX_NUM_LIGHT_PIECES);
+     m_defaultValueScaleSteps = num;
+ }
+ 
+-void KisColorSelector::setShowBgColor(bool value)
++void KisArtisticColorSelector::setShowBgColor(bool value)
+ {
+     m_showBgColor = value;
+     m_isDirtyColorPreview = true;
+     update();
+ }
+ 
+-void KisColorSelector::setShowValueScaleNumbers(bool value)
++void KisArtisticColorSelector::setShowValueScaleNumbers(bool value)
+ {
+     m_showValueScaleNumbers = value;
+     recalculateAreas(quint8(getNumLightPieces()));
+diff --git a/plugins/dockers/artisticcolorselector/kis_color_selector.h b/plugins/dockers/artisticcolorselector/kis_color_selector.h
+index 516b785..d11553c 100644
+--- a/plugins/dockers/artisticcolorselector/kis_color_selector.h
++++ b/plugins/dockers/artisticcolorselector/kis_color_selector.h
+@@ -23,7 +23,7 @@ class QPainter;
+ class KisDisplayColorConverter;
+ class QTransform;
+ 
+-class KisColorSelector: public QWidget
++class KisArtisticColorSelector: public QWidget
+ {
+     Q_OBJECT
+ 
+@@ -44,7 +44,7 @@ class KisColorSelector: public QWidget
+     };
+ 
+ public:
+-    KisColorSelector(QWidget* parent, KisColor::Type type=KisColor::HSL);
++    KisArtisticColorSelector(QWidget* parent, KisColor::Type type=KisColor::HSL);
+ 
+     void setColorSpace(KisColor::Type type);
+     void setColorConverter(KisDisplayColorConverter* colorConverter);
+diff --git a/plugins/dockers/layerdocker/NodeDelegate.cpp b/plugins/dockers/layerdocker/NodeDelegate.cpp
+index 99b0251..9109779 100644
+--- a/plugins/dockers/layerdocker/NodeDelegate.cpp
++++ b/plugins/dockers/layerdocker/NodeDelegate.cpp
+@@ -1198,6 +1198,9 @@ QWidget *NodeDelegate::createEditor(QWidget *parent, const QStyleOptionViewItem&
+     // because replacing the text while user type is confusing
+     const QString &text = index.data(Qt::DisplayRole).toString();
+     d->edit = new QLineEdit(text, parent);
++#ifdef Q_OS_IOS
++    d->edit->setProperty("kritaIosExplicitTextInput", true);
++#endif
+     d->edit->setFocusPolicy(Qt::StrongFocus);
+     d->edit->installEventFilter(const_cast<NodeDelegate*>(this)); //hack?
+     return d->edit;
+diff --git a/plugins/dockers/layerdocker/NodeView.cpp b/plugins/dockers/layerdocker/NodeView.cpp
+index 4b60268..8658894 100644
+--- a/plugins/dockers/layerdocker/NodeView.cpp
++++ b/plugins/dockers/layerdocker/NodeView.cpp
+@@ -91,6 +91,11 @@ NodeView::NodeView(QWidget *parent)
+     setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
+     setSelectionMode(QAbstractItemView::ExtendedSelection);
+     setRootIsDecorated(false);
++#ifdef Q_OS_IOS
++    // Touch selection must not implicitly create the layer-name editor.
++    // LayerBox::slotRenameCurrentNode() can still call edit() explicitly.
++    setEditTriggers(QAbstractItemView::NoEditTriggers);
++#endif
+ 
+     header()->hide();
+     setDragEnabled(true);
+diff --git a/plugins/dockers/svgcollectiondocker/Plugin.cpp b/plugins/dockers/svgcollectiondocker/Plugin.cpp
+index 6bca124..51d048c 100644
+--- a/plugins/dockers/svgcollectiondocker/Plugin.cpp
++++ b/plugins/dockers/svgcollectiondocker/Plugin.cpp
+@@ -11,9 +11,9 @@
+ 
+ #include <kpluginfactory.h>
+ 
+-K_PLUGIN_FACTORY_WITH_JSON(PluginFactory, "svgcollectiondocker.json", registerPlugin<Plugin>();)
++K_PLUGIN_FACTORY_WITH_JSON(PluginFactory, "svgcollectiondocker.json", registerPlugin<KritaSvgCollectionPlugin>();)
+ 
+-Plugin::Plugin(QObject *parent, const QVariantList &)
++KritaSvgCollectionPlugin::KritaSvgCollectionPlugin(QObject *parent, const QVariantList &)
+     : QObject(parent)
+ {
+     KoDockRegistry::instance()->add(new SvgSymbolCollectionDockerFactory());
+diff --git a/plugins/dockers/svgcollectiondocker/Plugin.h b/plugins/dockers/svgcollectiondocker/Plugin.h
+index b0a2e21..1866d8a 100644
+--- a/plugins/dockers/svgcollectiondocker/Plugin.h
++++ b/plugins/dockers/svgcollectiondocker/Plugin.h
+@@ -9,13 +9,13 @@
+ #include <QObject>
+ #include <QVariantList>
+ 
+-class Plugin : public QObject
++class KritaSvgCollectionPlugin : public QObject
+ {
+     Q_OBJECT
+ 
+ public:
+-    Plugin(QObject *parent, const QVariantList &);
+-    ~Plugin() override {}
++    KritaSvgCollectionPlugin(QObject *parent, const QVariantList &);
++    ~KritaSvgCollectionPlugin() override {}
+ };
+ 
+ #endif
+diff --git a/plugins/dockers/textproperties/CMakeLists.txt b/plugins/dockers/textproperties/CMakeLists.txt
+index a55a2e7..7484a5a 100644
+--- a/plugins/dockers/textproperties/CMakeLists.txt
++++ b/plugins/dockers/textproperties/CMakeLists.txt
+@@ -13,6 +13,7 @@ set(KRITA_TEXTPROPERTIES_SOURCES
+ )
+ 
+ qt_add_resources(KRITA_TEXTPROPERTIES_SOURCES textproperties.qrc)
++krita_register_ios_static_resource(textproperties ":/TextProperties.qml" textproperties.qrc)
+ 
+ kis_add_library(kritatextproperties MODULE ${KRITA_TEXTPROPERTIES_SOURCES})
+ target_link_libraries(kritatextproperties 
+diff --git a/plugins/dockers/widegamutcolorselector/CMakeLists.txt b/plugins/dockers/widegamutcolorselector/CMakeLists.txt
+index 0f121b4..0e20dc5 100644
+--- a/plugins/dockers/widegamutcolorselector/CMakeLists.txt
++++ b/plugins/dockers/widegamutcolorselector/CMakeLists.txt
+@@ -26,7 +26,7 @@ ki18n_wrap_ui(KRITA_WGCOLORSELECTOR_SOURCES
+     WdgWGShadeLineEditor.ui
+ )
+ 
+-add_library(kritawgcolorselector MODULE ${KRITA_WGCOLORSELECTOR_SOURCES})
++kis_add_library(kritawgcolorselector MODULE ${KRITA_WGCOLORSELECTOR_SOURCES})
+ 
+ target_link_libraries(kritawgcolorselector kritaui)
+ 
+diff --git a/plugins/flake/pathshapes/CMakeLists.txt b/plugins/flake/pathshapes/CMakeLists.txt
+index d33f71c..5636c8f 100644
+--- a/plugins/flake/pathshapes/CMakeLists.txt
++++ b/plugins/flake/pathshapes/CMakeLists.txt
+@@ -26,6 +26,7 @@ ki18n_wrap_ui(pathshapes_SOURCES
+ )
+ 
+ qt_add_resources(pathshapes_SOURCES pathshapes.qrc)
++krita_register_ios_static_resource(pathshapes ":/callout-shape.png" pathshapes.qrc)
+ 
+ kis_add_library(krita_shape_paths MODULE ${pathshapes_SOURCES})
+ 
+diff --git a/plugins/impex/heightmap/CMakeLists.txt b/plugins/impex/heightmap/CMakeLists.txt
+index 42a6815..50ff7c9 100644
+--- a/plugins/impex/heightmap/CMakeLists.txt
++++ b/plugins/impex/heightmap/CMakeLists.txt
+@@ -2,10 +2,17 @@ add_subdirectory(tests)
+ 
+ include_directories( ${CMAKE_CURRENT_SOURCE_DIR} )
+ 
++set(heightmap_common_SOURCES kis_wdg_options_heightmap.cpp kis_heightmap_utils.cpp)
++if(IOS)
++    ki18n_wrap_ui(heightmap_common_SOURCES kis_wdg_options_heightmap.ui)
++    kis_add_library(kritaheightmapcommon STATIC ${heightmap_common_SOURCES})
++    target_link_libraries(kritaheightmapcommon PUBLIC kritaui kritaimpex)
++    set(heightmap_common_SOURCES)
++endif()
++
+ set(kritaheightmapimport_SOURCES
+     kis_heightmap_import.cpp
+-    kis_wdg_options_heightmap.cpp
+-    kis_heightmap_utils.cpp
++    ${heightmap_common_SOURCES}
+     )
+ 
+ ki18n_wrap_ui(kritaheightmapimport_SOURCES kis_wdg_options_heightmap.ui )
+@@ -18,8 +25,7 @@ install(TARGETS kritaheightmapimport  DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+ 
+ set(kritaheightmapexport_SOURCES
+     kis_heightmap_export.cpp
+-    kis_wdg_options_heightmap.cpp
+-    kis_heightmap_utils.cpp
++    ${heightmap_common_SOURCES}
+     )
+ 
+ ki18n_wrap_ui(kritaheightmapexport_SOURCES kis_wdg_options_heightmap.ui )
+@@ -31,3 +37,8 @@ target_link_libraries(kritaheightmapexport kritaui kritaimpex)
+ install(TARGETS kritaheightmapexport  DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+ 
+ install(FILES krita_heightmap.desktop DESTINATION ${KDE_INSTALL_APPDIR})
++
++if(IOS)
++    target_link_libraries(kritaheightmapimport kritaheightmapcommon)
++    target_link_libraries(kritaheightmapexport kritaheightmapcommon)
++endif()
+diff --git a/plugins/impex/jpeg/CMakeLists.txt b/plugins/impex/jpeg/CMakeLists.txt
+index 825e975..a72ef64 100644
+--- a/plugins/impex/jpeg/CMakeLists.txt
++++ b/plugins/impex/jpeg/CMakeLists.txt
+@@ -17,6 +17,12 @@ set(libkritaconverter_LIB_SRCS
+     ${ICCJPEG_SOURCE_DIR}/iccjpeg.c
+     )
+ 
++if(IOS)
++    kis_add_library(kritajpegcommon STATIC ${libkritaconverter_LIB_SRCS})
++    target_link_libraries(kritajpegcommon PUBLIC kritaui ${JPEG_LIBRARIES} ${LCMS2_LIBRARIES} LibExiv2::LibExiv2)
++    set(libkritaconverter_LIB_SRCS)
++endif()
++
+ set(kritajpegimport_SOURCES
+     kis_jpeg_import.cc
+     ${libkritaconverter_LIB_SRCS}
+@@ -49,3 +55,8 @@ endif()
+ install(TARGETS kritajpegexport  DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+ 
+ install(FILES krita_jpeg.desktop DESTINATION ${KDE_INSTALL_APPDIR})
++
++if(IOS)
++    target_link_libraries(kritajpegimport kritajpegcommon)
++    target_link_libraries(kritajpegexport kritajpegcommon)
++endif()
+diff --git a/plugins/impex/ora/CMakeLists.txt b/plugins/impex/ora/CMakeLists.txt
+index 28b2ad0..c98ce8f 100644
+--- a/plugins/impex/ora/CMakeLists.txt
++++ b/plugins/impex/ora/CMakeLists.txt
+@@ -8,6 +8,12 @@ set(libkritaconverter_LIB_SRCS
+     kis_open_raster_stack_save_visitor.cpp
+     )
+ 
++if(IOS)
++    kis_add_library(kritaoracommon STATIC ${libkritaconverter_LIB_SRCS})
++    target_link_libraries(kritaoracommon PUBLIC kritaui kritaimpex)
++    set(libkritaconverter_LIB_SRCS)
++endif()
++
+ set(kritaoraimport_SOURCES
+     ora_import.cc
+     ${libkritaconverter_LIB_SRCS}
+@@ -31,3 +37,8 @@ target_link_libraries(kritaoraexport kritaui kritaimpex)
+ install(TARGETS kritaoraexport  DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+ 
+ install(FILES krita_ora.desktop DESTINATION ${KDE_INSTALL_APPDIR})
++
++if(IOS)
++    target_link_libraries(kritaoraimport kritaoracommon)
++    target_link_libraries(kritaoraexport kritaoracommon)
++endif()
+diff --git a/plugins/impex/rgbe/CMakeLists.txt b/plugins/impex/rgbe/CMakeLists.txt
+index f0d616e..ba2da3c 100644
+--- a/plugins/impex/rgbe/CMakeLists.txt
++++ b/plugins/impex/rgbe/CMakeLists.txt
+@@ -7,7 +7,7 @@ set(kritargbeimport_SOURCES
+     RGBEImport.cpp
+ )
+ 
+-add_library(kritargbeimport MODULE ${kritargbeimport_SOURCES})
++kis_add_library(kritargbeimport MODULE ${kritargbeimport_SOURCES})
+ target_link_libraries(kritargbeimport kritaui kritargbeimportutils)
+ 
+ install(TARGETS kritargbeimport DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+diff --git a/plugins/impex/webp/CMakeLists.txt b/plugins/impex/webp/CMakeLists.txt
+index 5d43b63..ec1deb9 100644
+--- a/plugins/impex/webp/CMakeLists.txt
++++ b/plugins/impex/webp/CMakeLists.txt
+@@ -6,7 +6,7 @@ set(kritawebpexport_SOURCES
+ )
+ ki18n_wrap_ui(kritawebpexport_SOURCES kis_wdg_options_webp.ui)
+ 
+-add_library(kritawebpexport MODULE ${kritawebpexport_SOURCES})
++kis_add_library(kritawebpexport MODULE ${kritawebpexport_SOURCES})
+ target_link_libraries(kritawebpexport kritaui kritalibkra kritaimpex WebP::webp WebP::libwebpmux)
+ 
+ install(TARGETS kritawebpexport  DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+@@ -16,7 +16,7 @@ set(kritawebpimport_SOURCES
+     kis_webp_import.cpp
+ )
+ 
+-add_library(kritawebpimport MODULE ${kritawebpimport_SOURCES})
++kis_add_library(kritawebpimport MODULE ${kritawebpimport_SOURCES})
+ target_link_libraries(kritawebpimport kritaui WebP::webp WebP::webpdemux)
+ 
+ install(TARGETS kritawebpimport DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+diff --git a/plugins/paintops/libpaintop/kis_paintop_plugin_utils.h b/plugins/paintops/libpaintop/kis_paintop_plugin_utils.h
+index e69dea2..9b13c0e 100644
+--- a/plugins/paintops/libpaintop/kis_paintop_plugin_utils.h
++++ b/plugins/paintops/libpaintop/kis_paintop_plugin_utils.h
+@@ -38,7 +38,7 @@ namespace KisPaintOpPluginUtils {
+  * @param pi - The paint information.
+  * @see KisPaintInformation
+  */
+-KisSpacingInformation effectiveSpacing(qreal dabWidth,
++inline KisSpacingInformation effectiveSpacing(qreal dabWidth,
+                                        qreal dabHeight,
+                                        bool isotropicSpacing,
+                                        qreal rotation,
+@@ -79,7 +79,7 @@ KisSpacingInformation effectiveSpacing(qreal dabWidth,
+  * @param pi - The paint information.
+  * @see KisPaintInformation
+  */
+-KisTimingInformation effectiveTiming(const KisAirbrushOptionData *airbrushOption,
++inline KisTimingInformation effectiveTiming(const KisAirbrushOptionData *airbrushOption,
+                                      const KisRateOption *rateOption,
+                                      const KisPaintInformation &pi)
+ {
+diff --git a/plugins/tools/basictools/CMakeLists.txt b/plugins/tools/basictools/CMakeLists.txt
+index 733a048..03c2b69 100644
+--- a/plugins/tools/basictools/CMakeLists.txt
++++ b/plugins/tools/basictools/CMakeLists.txt
+@@ -36,7 +36,8 @@ set(kritadefaulttools_SOURCES
+     default_tools.cc
+ )
+ 
+-qt_add_resources(kritadefaulttools_SOURCES defaulttools.qrc )
++qt_add_resources(kritadefaulttools_SOURCES basictools.qrc)
++krita_register_ios_static_resource(basictools ":/tool_fill_cursor.svg" basictools.qrc)
+ 
+ kis_add_library(kritadefaulttools MODULE ${kritadefaulttools_SOURCES})
+ 
+diff --git a/plugins/tools/basictools/defaulttools.qrc b/plugins/tools/basictools/defaulttools.qrc
+deleted file mode 100644
+index d714351..0000000
+--- a/plugins/tools/basictools/defaulttools.qrc
++++ /dev/null
+@@ -1,19 +0,0 @@
+-<!DOCTYPE RCC>
+-<!--
+-  SPDX-FileCopyrightText: none
+-  SPDX-License-Identifier: CC0-1.0
+--->
+-<RCC version="1.0">
+-    <qresource>
+-        <file>tool_fill_cursor.svg</file>
+-        <file>tool_ellipse_cursor.svg</file>
+-        <file>tool_gradient_cursor.svg</file>
+-        <file>tool_line_cursor.svg</file>
+-        <file>tool_rectangle_cursor.svg</file>
+-        <file>tool_fill_eraser_cursor.svg</file>
+-        <file>tool_ellipse_eraser_cursor.svg</file>
+-        <file>tool_gradient_eraser_cursor.svg</file>
+-        <file>tool_line_eraser_cursor.svg</file>
+-        <file>tool_rectangle_eraser_cursor.svg</file>
+-    </qresource>
+-</RCC>
+diff --git a/plugins/tools/defaulttool/CMakeLists.txt b/plugins/tools/defaulttool/CMakeLists.txt
+index aa425f5..3d6a496 100644
+--- a/plugins/tools/defaulttool/CMakeLists.txt
++++ b/plugins/tools/defaulttool/CMakeLists.txt
+@@ -28,6 +28,7 @@ ki18n_wrap_ui(defaulttools_SRCS
+ )
+ 
+ qt_add_resources(defaulttools_SRCS defaulttools.qrc)
++krita_register_ios_static_resource(defaulttools ":/escape-direction-all.png" defaulttools.qrc)
+ 
+ kis_add_library(krita_flaketools MODULE ${defaulttools_SRCS})
+ target_link_libraries(krita_flaketools kritaflake kritawidgets kritaui)
+diff --git a/plugins/tools/karbonplugins/tools/CMakeLists.txt b/plugins/tools/karbonplugins/tools/CMakeLists.txt
+index ea6d268..2f37865 100644
+--- a/plugins/tools/karbonplugins/tools/CMakeLists.txt
++++ b/plugins/tools/karbonplugins/tools/CMakeLists.txt
+@@ -9,6 +9,7 @@ set(karbon_tools_SOURCES
+ )
+ 
+ qt_add_resources(karbon_tools_SOURCES karbontools.qrc)
++krita_register_ios_static_resource(karbontools ":/calligraphy.png" karbontools.qrc)
+ 
+ kis_add_library(krita_karbontools MODULE ${karbon_tools_SOURCES})
+ 
+@@ -16,4 +17,3 @@ target_link_libraries(krita_karbontools kritaui kritawidgets KF${KF_MAJOR}::Comp
+ 
+ install(TARGETS krita_karbontools DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+ install(FILES  CalligraphyTool/KarbonCalligraphyTool.action DESTINATION ${KDE_INSTALL_DATADIR}/krita/actions)
+-
+diff --git a/plugins/tools/selectiontools/CMakeLists.txt b/plugins/tools/selectiontools/CMakeLists.txt
+index 2d5fda1..d04abb8 100644
+--- a/plugins/tools/selectiontools/CMakeLists.txt
++++ b/plugins/tools/selectiontools/CMakeLists.txt
+@@ -13,6 +13,7 @@ set(kritaselectiontools_SOURCES
+ )
+ 
+ qt_add_resources(kritaselectiontools_SOURCES selectiontools.qrc)
++krita_register_ios_static_resource(selectiontools ":/tool_contiguous_selection_cursor_add.svg" selectiontools.qrc)
+ 
+ kis_add_library(kritaselectiontools MODULE ${kritaselectiontools_SOURCES})
+ 
+diff --git a/plugins/tools/svgtexttool/CMakeLists.txt b/plugins/tools/svgtexttool/CMakeLists.txt
+index 1a74341..21bc9ec 100644
+--- a/plugins/tools/svgtexttool/CMakeLists.txt
++++ b/plugins/tools/svgtexttool/CMakeLists.txt
+@@ -51,6 +51,7 @@ set(SvgTextTool_SOURCES
+     Plugin.cpp
+     svgtexttool.qrc
+ )
++krita_register_ios_static_resource(svgtexttool ":/kxmlgui5/svgtexttool.xmlgui" svgtexttool.qrc)
+ 
+ 
+ kis_add_library(krita_tool_svgtext_static STATIC ${SvgTextTool_SRCS})
+diff --git a/plugins/tools/svgtexttool/Plugin.cpp b/plugins/tools/svgtexttool/Plugin.cpp
+index ebe31b3..8820cf4 100644
+--- a/plugins/tools/svgtexttool/Plugin.cpp
++++ b/plugins/tools/svgtexttool/Plugin.cpp
+@@ -20,7 +20,7 @@
+ #include "SvgTextToolOptionsModel.h"
+ #include "SvgTextToolOptionsManager.h"
+ 
+-K_PLUGIN_FACTORY_WITH_JSON(PluginFactory, "krita_tool_svgtext.json", registerPlugin<Plugin>();)
++K_PLUGIN_FACTORY_WITH_JSON(PluginFactory, "krita_tool_svgtext.json", registerPlugin<KritaSvgTextToolPlugin>();)
+ 
+ KIS_DECLARE_STATIC_INITIALIZER {
+     qmlRegisterType<GlyphPaletteProxyModel>("org.krita.tools.text", 1, 0, "GlyphPaletteProxyModel");
+@@ -28,7 +28,7 @@ KIS_DECLARE_STATIC_INITIALIZER {
+     qmlRegisterType<SvgTextToolOptionsModel>("org.krita.tools.text", 1, 0, "SvgTextToolOptionsModel");
+     qmlRegisterType<SvgTextToolOptionsManager>("org.krita.tools.text", 1, 0, "SvgTextToolOptionsManager");
+ }
+-Plugin::Plugin(QObject *parent, const QVariantList &)
++KritaSvgTextToolPlugin::KritaSvgTextToolPlugin(QObject *parent, const QVariantList &)
+     : QObject(parent)
+ {
+     KoToolRegistry::instance()->add(new SvgTextToolFactory());
+diff --git a/plugins/tools/svgtexttool/Plugin.h b/plugins/tools/svgtexttool/Plugin.h
+index 88e9636..c6377c9 100644
+--- a/plugins/tools/svgtexttool/Plugin.h
++++ b/plugins/tools/svgtexttool/Plugin.h
+@@ -11,13 +11,13 @@
+ #include <QObject>
+ #include <QVariantList>
+ 
+-class Plugin : public QObject
++class KritaSvgTextToolPlugin : public QObject
+ {
+     Q_OBJECT
+ 
+ public:
+-    Plugin(QObject *parent, const QVariantList &);
+-    ~Plugin() {}
++    KritaSvgTextToolPlugin(QObject *parent, const QVariantList &);
++    ~KritaSvgTextToolPlugin() {}
+ };
+ 
+ #endif
+diff --git a/plugins/tools/tool_crop/CMakeLists.txt b/plugins/tools/tool_crop/CMakeLists.txt
+index ac9a14c..26b4abe 100644
+--- a/plugins/tools/tool_crop/CMakeLists.txt
++++ b/plugins/tools/tool_crop/CMakeLists.txt
+@@ -5,6 +5,7 @@ set(kritatoolcrop_SOURCES
+     kistoolcropconfigwidget.cpp
+     )
+ qt_add_resources(kritatoolcrop_SOURCES toolcrop.qrc)
++krita_register_ios_static_resource(toolcrop ":/tool_crop_cursor.svg" toolcrop.qrc)
+ 
+ ki18n_wrap_ui(kritatoolcrop_SOURCES wdg_tool_crop.ui)
+ 
+diff --git a/plugins/tools/tool_polygon/CMakeLists.txt b/plugins/tools/tool_polygon/CMakeLists.txt
+index c63bdff..87f85a9 100644
+--- a/plugins/tools/tool_polygon/CMakeLists.txt
++++ b/plugins/tools/tool_polygon/CMakeLists.txt
+@@ -4,6 +4,7 @@ set(kritatoolpolygon_SOURCES
+     )
+ 
+ qt_add_resources(kritatoolpolygon_SOURCES tool_polygon.qrc)
++krita_register_ios_static_resource(tool_polygon ":/tool_polygon_cursor.svg" tool_polygon.qrc)
+ kis_add_library(kritatoolpolygon MODULE ${kritatoolpolygon_SOURCES})
+ 
+ target_link_libraries(kritatoolpolygon kritaui)
+diff --git a/plugins/tools/tool_polyline/CMakeLists.txt b/plugins/tools/tool_polyline/CMakeLists.txt
+index ecc8357..aae7bc9 100644
+--- a/plugins/tools/tool_polyline/CMakeLists.txt
++++ b/plugins/tools/tool_polyline/CMakeLists.txt
+@@ -4,6 +4,7 @@ set(kritatoolpolyline_SOURCES
+     )
+ 
+ qt_add_resources(kritatoolpolyline_SOURCES polyline.qrc)
++krita_register_ios_static_resource(polyline ":/tool_polyline_cursor.svg" polyline.qrc)
+ 
+ kis_add_library(kritatoolpolyline MODULE ${kritatoolpolyline_SOURCES})
+ 
+diff --git a/plugins/tools/tool_transform2/CMakeLists.txt b/plugins/tools/tool_transform2/CMakeLists.txt
+index f886da3..3337e83 100644
+--- a/plugins/tools/tool_transform2/CMakeLists.txt
++++ b/plugins/tools/tool_transform2/CMakeLists.txt
+@@ -33,6 +33,7 @@ set(kritatooltransform_SOURCES
+ )
+ 
+ qt_add_resources(kritatooltransform_SOURCES tool_transform.qrc)
++krita_register_ios_static_resource(tool_transform ":/mesh_cursor_free.svg" tool_transform.qrc)
+ kis_add_library(kritatooltransform MODULE ${kritatooltransform_SOURCES})
+ 
+ target_link_libraries(kritatooltransform_static
+diff --git a/qmlmodules/components/CMakeLists.txt b/qmlmodules/components/CMakeLists.txt
+index b51c00b..5afd49a 100644
+--- a/qmlmodules/components/CMakeLists.txt
++++ b/qmlmodules/components/CMakeLists.txt
+@@ -1,3 +1,9 @@
++if(IOS)
++    set(_krita_qml_library_type STATIC)
++else()
++    set(_krita_qml_library_type SHARED)
++endif()
++
+ include(ECMQmlModule)
+ 
+ if (QT_MAJOR_VERSION STREQUAL "6")
+@@ -5,7 +11,7 @@ if (QT_MAJOR_VERSION STREQUAL "6")
+     ecm_add_qml_module(kritaqmlcomponents
+         URI "org.krita.components"
+         VERSION 1.0
+-        SHARED
++        ${_krita_qml_library_type}
+         GENERATE_PLUGIN_SOURCE
+     )
+ 
+diff --git a/qmlmodules/widgets/CMakeLists.txt b/qmlmodules/widgets/CMakeLists.txt
+index 37b9c7a..25dd0b7 100644
+--- a/qmlmodules/widgets/CMakeLists.txt
++++ b/qmlmodules/widgets/CMakeLists.txt
+@@ -4,6 +4,7 @@ set(kritaqmlwidgets_SRCS
+     kisquickwidgets.qrc
+ 
+ )
++krita_register_ios_static_resource(kisquickwidgets ":/KisQQuickPopupWidget.qml" kisquickwidgets.qrc)
+ 
+ kis_add_library(kritaqmlwidgets SHARED ${kritaqmlwidgets_SRCS})
+ generate_export_header(kritaqmlwidgets)
+diff --git a/krita/krita_ios_pencil_bridge.cpp b/krita/krita_ios_pencil_bridge.cpp
+new file mode 100644
+index 0000000..bb4fc67
+--- /dev/null
++++ b/krita/krita_ios_pencil_bridge.cpp
+@@ -0,0 +1,63 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Krita contributors
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include <cmath>
++
++#include <QApplication>
++#include <QAction>
++#include <QPoint>
++#include <QWidget>
++
++#include <kactioncollection.h>
++#include <KisMainWindow.h>
++#include <KisPart.h>
++#include <KisViewManager.h>
++#include <canvas/kis_canvas2.h>
++#include <input/kis_input_manager.h>
++
++extern "C" void kritaToggleIosPopupWidget(double screenX, double screenY, bool hasPosition)
++{
++    if (!qApp) {
++        return;
++    }
++
++    KisMainWindow *mainWindow = KisPart::instance()->currentMainwindow();
++    if (!mainWindow || !mainWindow->viewManager()) {
++        return;
++    }
++
++    KisInputManager *inputManager = mainWindow->viewManager()->inputManager();
++    if (!inputManager || !inputManager->canvas() || !inputManager->canvas()->canvasWidget()) {
++        return;
++    }
++
++    QWidget *canvasWidget = inputManager->canvas()->canvasWidget();
++    QPoint canvasPosition = canvasWidget->rect().center();
++    if (hasPosition && std::isfinite(screenX) && std::isfinite(screenY)) {
++        const QPoint mappedPosition = canvasWidget->mapFromGlobal(QPoint(qRound(screenX), qRound(screenY)));
++        if (canvasWidget->rect().contains(mappedPosition)) {
++            canvasPosition = mappedPosition;
++        }
++    }
++
++    inputManager->togglePopupWidgetAt(canvasPosition);
++}
++
++extern "C" void kritaToggleIosEraserMode()
++{
++    if (!qApp) {
++        return;
++    }
++
++    KisMainWindow *mainWindow = KisPart::instance()->currentMainwindow();
++    if (!mainWindow || !mainWindow->actionCollection()) {
++        return;
++    }
++
++    QAction *eraseAction = mainWindow->actionCollection()->action(QStringLiteral("erase_action"));
++    if (eraseAction && eraseAction->isEnabled()) {
++        eraseAction->trigger();
++    }
++}
+diff --git a/krita/krita_ios_touch_guard.mm b/krita/krita_ios_touch_guard.mm
+new file mode 100644
+index 0000000..9f948da
+--- /dev/null
++++ b/krita/krita_ios_touch_guard.mm
+@@ -0,0 +1,245 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Krita contributors
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#import <UIKit/UIKit.h>
++#import <objc/runtime.h>
++
++extern "C" void kritaToggleIosPopupWidget(double screenX, double screenY, bool hasPosition);
++extern "C" void kritaToggleIosEraserMode();
++
++@interface KritaIOSTouchGuard : NSObject
++- (void)kritaDidMoveToWindow;
++- (void)kritaTouchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
++- (void)kritaTouchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
++- (void)kritaTouchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
++@end
++
++@interface KritaIOSPencilInteractionDelegate : NSObject <UIPencilInteractionDelegate>
++@end
++
++namespace {
++
++char s_guardedPencilTouchesKey;
++char s_lastPencilLocationKey;
++char s_pencilInteractionKey;
++char s_pencilInteractionDelegateKey;
++Ivar s_activePencilTouchIvar = nullptr;
++
++NSMutableSet<UITouch *> *guardedPencilTouches(id view, bool create)
++{
++    NSMutableSet<UITouch *> *touches = objc_getAssociatedObject(view, &s_guardedPencilTouchesKey);
++    if (!touches && create) {
++        touches = [NSMutableSet set];
++        objc_setAssociatedObject(view, &s_guardedPencilTouchesKey, touches,
++                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++    }
++    return touches;
++}
++
++void retainPencilTouches(id view, NSSet<UITouch *> *touches)
++{
++    NSMutableSet<UITouch *> *guardedTouches = guardedPencilTouches(view, true);
++    for (UITouch *touch in touches) {
++        if (touch.type == UITouchTypeStylus) {
++            [guardedTouches addObject:touch];
++            const CGPoint location = [touch locationInView:view];
++            objc_setAssociatedObject(view, &s_lastPencilLocationKey,
++                                     [NSValue valueWithCGPoint:location],
++                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++        }
++    }
++}
++
++void releasePencilTouches(id view, NSSet<UITouch *> *touches)
++{
++    NSMutableSet<UITouch *> *guardedTouches = guardedPencilTouches(view, false);
++    for (UITouch *touch in touches) {
++        if (touch.type == UITouchTypeStylus) {
++            [guardedTouches removeObject:touch];
++        }
++    }
++}
++
++void togglePopupWidget(UIView *sourceView, CGPoint sourcePosition, bool hasPosition)
++{
++    if (!sourceView) {
++        return;
++    }
++
++    CGPoint screenPosition = CGPointZero;
++    if (hasPosition) {
++        const CGPoint windowPosition = [sourceView convertPoint:sourcePosition toView:sourceView.window];
++        screenPosition = [sourceView.window convertPoint:windowPosition toWindow:nil];
++    }
++    kritaToggleIosPopupWidget(screenPosition.x, screenPosition.y, hasPosition);
++}
++
++void togglePopupWidget(UIPencilInteraction *interaction, UIPencilHoverPose *hoverPose)
++{
++    UIView *view = interaction.view;
++    if (!view) {
++        return;
++    }
++
++    if (hoverPose) {
++        togglePopupWidget(view, hoverPose.location, true);
++        return;
++    }
++
++    NSValue *lastLocation = objc_getAssociatedObject(view, &s_lastPencilLocationKey);
++    togglePopupWidget(view, lastLocation ? lastLocation.CGPointValue : CGPointZero,
++                      lastLocation != nil);
++}
++
++void installPencilInteraction(UIView *view)
++{
++    if (!view.window || objc_getAssociatedObject(view, &s_pencilInteractionKey)) {
++        return;
++    }
++
++    KritaIOSPencilInteractionDelegate *delegate = [KritaIOSPencilInteractionDelegate new];
++    UIPencilInteraction *interaction = [UIPencilInteraction new];
++    interaction.delegate = delegate;
++    interaction.enabled = YES;
++    [view addInteraction:interaction];
++
++    // UIPencilInteraction.delegate is weak, so retain both objects with QUIView.
++    objc_setAssociatedObject(view, &s_pencilInteractionDelegateKey, delegate,
++                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++    objc_setAssociatedObject(view, &s_pencilInteractionKey, interaction,
++                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++}
++
++bool installMethodGuard(Class viewClass, SEL originalSelector, SEL guardedSelector)
++{
++    Method originalMethod = class_getInstanceMethod(viewClass, originalSelector);
++    Method guardedMethod = class_getInstanceMethod([KritaIOSTouchGuard class], guardedSelector);
++    if (!originalMethod || !guardedMethod) {
++        return false;
++    }
++
++    // class_getInstanceMethod() also returns inherited methods. Exchanging an
++    // inherited UIView method would therefore affect every UIKit view, not
++    // only Qt's QUIView. Materialize the inherited implementation as a QUIView
++    // override before exchanging it with the guard.
++    class_addMethod(viewClass,
++                    originalSelector,
++                    method_getImplementation(originalMethod),
++                    method_getTypeEncoding(originalMethod));
++    originalMethod = class_getInstanceMethod(viewClass, originalSelector);
++
++    if (!class_addMethod(viewClass,
++                         guardedSelector,
++                         method_getImplementation(guardedMethod),
++                         method_getTypeEncoding(guardedMethod))) {
++        return false;
++    }
++
++    Method installedGuardMethod = class_getInstanceMethod(viewClass, guardedSelector);
++    method_exchangeImplementations(originalMethod, installedGuardMethod);
++    return true;
++}
++
++} // namespace
++
++@implementation KritaIOSTouchGuard
++
++- (void)kritaDidMoveToWindow
++{
++    [self kritaDidMoveToWindow];
++    installPencilInteraction((UIView *)self);
++}
++
++- (void)kritaTouchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
++{
++    NSMutableSet<UITouch *> *guardedTouches = guardedPencilTouches(self, true);
++
++    // Qt 6.10 stores this UITouch in a non-retaining ivar. If UIKit omits the
++    // matching ended/cancelled callback, that ivar can point to a deallocated
++    // object on the next touch sequence. Drop a retained stale touch before Qt
++    // asks the new NSSet to compare against it.
++    if (s_activePencilTouchIvar) {
++        id activePencilTouch = object_getIvar(self, s_activePencilTouchIvar);
++        if (activePencilTouch && ![touches containsObject:activePencilTouch]) {
++            object_setIvar(self, s_activePencilTouchIvar, nil);
++            [guardedTouches removeObject:activePencilTouch];
++        }
++    }
++
++    retainPencilTouches(self, touches);
++    [self kritaTouchesBegan:touches withEvent:event];
++}
++
++- (void)kritaTouchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
++{
++    // Keep every Pencil UITouch alive until Qt has finished handleTouches().
++    retainPencilTouches(self, touches);
++    [self kritaTouchesEnded:touches withEvent:event];
++    releasePencilTouches(self, touches);
++}
++
++- (void)kritaTouchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
++{
++    retainPencilTouches(self, touches);
++    [self kritaTouchesCancelled:touches withEvent:event];
++    [guardedPencilTouches(self, false) removeAllObjects];
++}
++
++@end
++
++@implementation KritaIOSPencilInteractionDelegate
++
++- (void)pencilInteractionDidTap:(UIPencilInteraction *)interaction
++{
++    (void)interaction;
++    kritaToggleIosEraserMode();
++}
++
++- (void)pencilInteraction:(UIPencilInteraction *)interaction
++             didReceiveTap:(UIPencilInteractionTap *)tap
++{
++    (void)interaction;
++    (void)tap;
++    kritaToggleIosEraserMode();
++}
++
++- (void)pencilInteraction:(UIPencilInteraction *)interaction
++         didReceiveSqueeze:(UIPencilInteractionSqueeze *)squeeze
++{
++    if (squeeze.phase == UIPencilInteractionPhaseBegan) {
++        togglePopupWidget(interaction, squeeze.hoverPose);
++    }
++}
++
++@end
++
++extern "C" void kritaInstallIosTouchGuard()
++{
++    static bool installed = false;
++    if (installed) {
++        return;
++    }
++
++    Class viewClass = NSClassFromString(@"QUIView");
++    if (!viewClass) {
++        return;
++    }
++
++    s_activePencilTouchIvar = class_getInstanceVariable(viewClass, "m_activePencilTouch");
++
++    const bool moveInstalled = installMethodGuard(viewClass,
++                                                  @selector(didMoveToWindow),
++                                                  @selector(kritaDidMoveToWindow));
++    const bool beganInstalled = installMethodGuard(viewClass,
++                                                   @selector(touchesBegan:withEvent:),
++                                                   @selector(kritaTouchesBegan:withEvent:));
++    const bool endedInstalled = installMethodGuard(viewClass,
++                                                   @selector(touchesEnded:withEvent:),
++                                                   @selector(kritaTouchesEnded:withEvent:));
++    const bool cancelledInstalled = installMethodGuard(viewClass,
++                                                       @selector(touchesCancelled:withEvent:),
++                                                       @selector(kritaTouchesCancelled:withEvent:));
++    installed = moveInstalled && beganInstalled && endedInstalled && cancelledInstalled;
++}
+diff --git a/packaging/ios/Info.plist.in b/packaging/ios/Info.plist.in
+new file mode 100644
+index 0000000..9ec2d1d
+--- /dev/null
++++ b/packaging/ios/Info.plist.in
+@@ -0,0 +1,30 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0"><dict>
++<key>CFBundleExecutable</key><string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
++<key>CFBundleIdentifier</key><string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
++<key>CFBundleName</key><string>Krita</string>
++<key>CFBundleDisplayName</key><string>Krita</string>
++<key>CFBundleDevelopmentRegion</key><string>en</string>
++<key>CFBundleLocalizations</key><array>
++<string>en</string><string>zh-Hans</string><string>zh-Hant</string>
++<string>ja</string><string>ko</string>
++</array>
++<key>CFBundleIcons~ipad</key><dict><key>CFBundlePrimaryIcon</key><dict>
++<key>CFBundleIconFiles</key><array><string>1024-apps-krita.png</string></array>
++</dict></dict>
++<key>CFBundlePackageType</key><string>APPL</string>
++<key>CFBundleShortVersionString</key><string>${KRITA_STABLE_VERSION_MAJOR}.${KRITA_STABLE_VERSION_MINOR}.${KRITA_VERSION_RELEASE}</string>
++<key>CFBundleVersion</key><string>1</string>
++<key>LSRequiresIPhoneOS</key><true/>
++<key>MinimumOSVersion</key><string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
++<key>UIDeviceFamily</key><array><integer>2</integer></array>
++<key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
++<key>UIRequiresFullScreen</key><true/>
++<key>UILaunchScreen</key><dict/>
++<key>UISupportedInterfaceOrientations~ipad</key><array>
++<string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string>
++</array>
++<key>UIFileSharingEnabled</key><true/>
++<key>LSSupportsOpeningDocumentsInPlace</key><true/>
++</dict></plist>
+diff --git a/packaging/ios/KritaIOS.cmake b/packaging/ios/KritaIOS.cmake
+new file mode 100644
+index 0000000..eeab8f2
+--- /dev/null
++++ b/packaging/ios/KritaIOS.cmake
+@@ -0,0 +1,170 @@
++# SPDX-License-Identifier: BSD-3-Clause
++# Bundle metadata for device builds; signing identities remain caller supplied.
++function(krita_configure_ios_bundle target)
++    set(KRITA_IOS_BUNDLE_ID "org.example.krita" CACHE STRING "iPadOS bundle identifier")
++    set(KRITA_IOS_TEAM_ID "" CACHE STRING "Apple development team")
++    set_target_properties(${target} PROPERTIES
++        MACOSX_BUNDLE TRUE
++        MACOSX_BUNDLE_GUI_IDENTIFIER "${KRITA_IOS_BUNDLE_ID}"
++        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Info.plist.in"
++        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${KRITA_IOS_BUNDLE_ID}"
++        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "2"
++        XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic")
++    if(KRITA_IOS_TEAM_ID)
++        set_target_properties(${target} PROPERTIES
++            XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "YES"
++            XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${KRITA_IOS_TEAM_ID}")
++    endif()
++    set(_font_config "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/fonts.conf")
++    set_source_files_properties("${_font_config}" PROPERTIES MACOSX_PACKAGE_LOCATION "etc/fonts")
++    set(_app_icon "${CMAKE_SOURCE_DIR}/krita/pics/branding/default/1024-apps-krita.png")
++    set_source_files_properties("${_app_icon}" PROPERTIES MACOSX_PACKAGE_LOCATION ".")
++    target_sources(${target} PRIVATE "${_font_config}" "${_app_icon}")
++
++    # ki18n's default install rule has no component, while Xcode's post-build
++    # staging deliberately installs only the Krita application component.
++    # Add component-aware rules for Krita and its statically linked KDE
++    # Frameworks catalogs so both Ninja packaging and Xcode Run are localized.
++    install(DIRECTORY "${CMAKE_BINARY_DIR}/locale/"
++        DESTINATION "share/locale" COMPONENT krita)
++    if(KF6I18n_DIR)
++        get_filename_component(_kf6_ios_prefix "${KF6I18n_DIR}/../../.." ABSOLUTE)
++        if(EXISTS "${_kf6_ios_prefix}/share/locale")
++            install(DIRECTORY "${_kf6_ios_prefix}/share/locale/"
++                DESTINATION "share/locale" COMPONENT krita)
++        endif()
++    endif()
++    if(CMAKE_GENERATOR MATCHES "Xcode")
++        # A normal Xcode Run builds the application target but does not invoke
++        # CMake's install rules. Krita keeps its brushes, actions, profiles and
++        # other runtime data in the install share tree, so stage those rules and
++        # copy the resulting data into the bundle after the executable links.
++        # These installable libraries are not otherwise in the application's
++        # link graph. Build them so the shared "krita" install component is
++        # complete when the post-build staging command runs.
++        add_dependencies(${target} kritalibkis kritaexifcommon)
++        set(_xcode_install_root "${CMAKE_BINARY_DIR}/ios-xcode-install/$<CONFIG>")
++        add_custom_command(TARGET ${target} POST_BUILD
++            COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}"
++                --config "$<CONFIG>" --prefix "${_xcode_install_root}"
++                --component krita
++            COMMAND "${CMAKE_COMMAND}" -E rm -rf
++                "$<TARGET_BUNDLE_DIR:${target}>/share"
++            COMMAND "${CMAKE_COMMAND}" -E copy_directory
++                "${_xcode_install_root}/share"
++                "$<TARGET_BUNDLE_DIR:${target}>/share"
++            COMMENT "Installing Krita runtime data into the iPadOS app bundle"
++            VERBATIM)
++    endif()
++    # The legacy Krita finder exports only libexiv2's path. Its CMake target
++    # carries the Expat, zlib, Brotli and iconv dependencies needed for static linking.
++    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/cmake")
++    find_package(exiv2 CONFIG REQUIRED)
++    target_link_libraries(${target} PRIVATE Exiv2::exiv2lib)
++    get_property(_plugins GLOBAL PROPERTY KRITA_IOS_PLUGIN_TARGETS)
++    get_property(_resources GLOBAL PROPERTY KRITA_IOS_STATIC_RESOURCES)
++    if(NOT _resources)
++        message(FATAL_ERROR "No iOS static resources were registered")
++    endif()
++    set(_resource_source "#include <QtCore/QDebug>\n#include <QtCore/QResource>\n#include <QtCore/QString>\n\nbool kritaInitializeIosStaticResources()\n{\n    bool valid = true;\n")
++    string(ASCII 9 _resource_tab)
++    set(_resource_manifest "# resource-name${_resource_tab}sentinel${_resource_tab}qrc-source\n")
++    set(_resource_names)
++    foreach(_resource IN LISTS _resources)
++        string(REPLACE "|" ";" _resource_fields "${_resource}")
++        list(LENGTH _resource_fields _resource_field_count)
++        if(NOT _resource_field_count EQUAL 3)
++            message(FATAL_ERROR "Invalid iOS static resource registration: ${_resource}")
++        endif()
++        list(GET _resource_fields 0 _resource_name)
++        list(GET _resource_fields 1 _resource_sentinel)
++        list(GET _resource_fields 2 _resource_qrc)
++        if(_resource_name IN_LIST _resource_names)
++            message(FATAL_ERROR "Duplicate iOS static resource name: ${_resource_name}")
++        endif()
++        list(APPEND _resource_names "${_resource_name}")
++        string(APPEND _resource_source
++            "    Q_INIT_RESOURCE(${_resource_name});\n"
++            "    if (!QResource(QStringLiteral(\"${_resource_sentinel}\")).isValid()) {\n"
++            "        qCritical() << \"Missing iOS static resource:\" << QStringLiteral(\"${_resource_sentinel}\");\n"
++            "        valid = false;\n"
++            "    }\n")
++        string(APPEND _resource_manifest
++            "${_resource_name}${_resource_tab}${_resource_sentinel}${_resource_tab}${_resource_qrc}\n")
++    endforeach()
++    string(APPEND _resource_source "    return valid;\n}\n")
++    set(_resource_source_path "${CMAKE_CURRENT_BINARY_DIR}/krita_ios_resources.cpp")
++    set(_resource_manifest_path "${CMAKE_CURRENT_BINARY_DIR}/ios-static-resources.tsv")
++    file(WRITE "${_resource_source_path}" "${_resource_source}")
++    file(WRITE "${_resource_manifest_path}" "${_resource_manifest}")
++    target_sources(${target} PRIVATE "${_resource_source_path}")
++    set(_imports "#include <QtPlugin>\n#include <QtQml/qqmlextensionplugin.h>\n")
++    get_target_property(_qml_class kritaqmlcomponents QT_QML_MODULE_CLASS_NAME)
++    if(NOT _qml_class)
++        message(FATAL_ERROR "Krita QML plugin class is missing")
++    endif()
++    string(APPEND _imports "Q_IMPORT_QML_PLUGIN(${_qml_class})\n")
++    target_link_libraries(${target} PRIVATE kritaqmlcomponents)
++    foreach(_plugin IN LISTS _plugins)
++        get_target_property(_sources ${_plugin} SOURCES)
++        get_target_property(_source_dir ${_plugin} SOURCE_DIR)
++        set(_factory_found FALSE)
++        set(_static_sources ${_sources})
++        foreach(_source IN LISTS _sources)
++            set(_source_entry "${_source}")
++            if(NOT IS_ABSOLUTE "${_source}")
++                set(_source "${_source_dir}/${_source}")
++            endif()
++            if(EXISTS "${_source}" AND _source MATCHES "\\.(cpp|cc|cxx)$")
++                file(READ "${_source}" _contents)
++                string(REGEX MATCH "K_PLUGIN_FACTORY(_WITH_JSON)?[ \t\r\n]*\\([ \t\r\n]*([A-Za-z_][A-Za-z_0-9]*)" _match "${_contents}")
++                if(_match)
++                    # Desktop DSOs can reuse factory class names. Static factories
++                    # share one symbol table, so give every target its own name.
++                    set(_factory "${CMAKE_MATCH_2}")
++                    set(_static_factory "${_plugin}_${_factory}")
++                    # Rename in a generated source copy: moc must see the literal
++                    # class name, not a compiler-only macro alias (Qt token-pastes it).
++                    string(REPLACE "${_factory}" "${_static_factory}" _renamed_match "${_match}")
++                    string(REPLACE "${_match}" "${_renamed_match}" _static_contents "${_contents}")
++                    get_filename_component(_filename "${_source}" NAME)
++                    get_filename_component(_source_parent "${_source}" DIRECTORY)
++                    set(_static_dir "${CMAKE_CURRENT_BINARY_DIR}/ios-plugin-sources/${_plugin}")
++                    file(MAKE_DIRECTORY "${_static_dir}")
++                    set_property(TARGET ${_plugin} PROPERTY AUTOGEN_BUILD_DIR "${_static_dir}/autogen")
++                    set(_static_source "${_static_dir}/${_filename}")
++                    set(_existing_contents "")
++                    if(EXISTS "${_static_source}")
++                        file(READ "${_static_source}" _existing_contents)
++                    endif()
++                    if(NOT _existing_contents STREQUAL _static_contents)
++                        file(WRITE "${_static_source}" "${_static_contents}")
++                    endif()
++                    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_source}")
++                    list(REMOVE_ITEM _static_sources "${_source_entry}")
++                    list(APPEND _static_sources "${_static_source}")
++                    set_property(TARGET ${_plugin} APPEND PROPERTY AUTOGEN_TARGET_DEPENDS "${_static_source}")
++                    get_filename_component(_stem "${_source}" NAME_WE)
++                    foreach(_suffix h hpp)
++                        if(EXISTS "${_source_parent}/${_stem}.${_suffix}")
++                            list(APPEND _static_sources "${_source_parent}/${_stem}.${_suffix}")
++                        endif()
++                    endforeach()
++                    target_include_directories(${_plugin} PRIVATE "${_source_parent}")
++                    string(APPEND _imports "Q_IMPORT_PLUGIN(${_static_factory})\n")
++                    set(_factory_found TRUE)
++                endif()
++            endif()
++        endforeach()
++        list(REMOVE_DUPLICATES _static_sources)
++        set_property(TARGET ${_plugin} PROPERTY SOURCES "${_static_sources}")
++        if(NOT _factory_found)
++            message(FATAL_ERROR "No static factory found for iOS plugin ${_plugin}")
++        endif()
++    endforeach()
++    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/krita_ios_plugins.cpp" "${_imports}")
++    target_sources(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/krita_ios_plugins.cpp")
++    target_link_libraries(${target} PRIVATE ${_plugins})
++    # Qt finalization also imports the official static platform and QML plugins.
++    qt_finalize_executable(${target})
++endfunction()
+diff --git a/packaging/ios/cmake/FindBrotli.cmake b/packaging/ios/cmake/FindBrotli.cmake
+new file mode 100644
+index 0000000..861a666
+--- /dev/null
++++ b/packaging/ios/cmake/FindBrotli.cmake
+@@ -0,0 +1,45 @@
++#***************************************************************************
++#                                  _   _ ____  _
++#  Project                     ___| | | |  _ \| |
++#                             / __| | | | |_) | |
++#                            | (__| |_| |  _ <| |___
++#                             \___|\___/|_| \_\_____|
++#
++# Copyright (C) 1998 - 2020, Daniel Stenberg, <daniel@haxx.se>, et al.
++#
++# This software is licensed as described in the file COPYING, which
++# you should have received as part of this distribution. The terms
++# are also available at https://curl.se/docs/copyright.html.
++#
++# You may opt to use, copy, modify, merge, publish, distribute and/or sell
++# copies of the Software, and permit persons to whom the Software is
++# furnished to do so, under the terms of the COPYING file.
++#
++# This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
++# KIND, either express or implied.
++#
++###########################################################################
++include(FindPackageHandleStandardArgs)
++
++find_path(BROTLI_INCLUDE_DIR "brotli/decode.h")
++
++find_library(BROTLICOMMON_LIBRARY NAMES brotlicommon)
++find_library(BROTLIDEC_LIBRARY NAMES brotlidec)
++
++find_package_handle_standard_args(Brotli
++    FOUND_VAR
++      BROTLI_FOUND
++    REQUIRED_VARS
++      BROTLIDEC_LIBRARY
++      BROTLICOMMON_LIBRARY
++      BROTLI_INCLUDE_DIR
++    FAIL_MESSAGE
++      "Could NOT find Brotli"
++)
++
++set(Brotli_INCLUDE_DIRS ${BROTLI_INCLUDE_DIR})
++set(Brotli_LIBRARIES ${BROTLIDEC_LIBRARY} ${BROTLICOMMON_LIBRARY} )
++
++mark_as_advanced(BROTLI_INCLUDE_DIR)
++mark_as_advanced(BROTLICOMMON_LIBRARY)
++mark_as_advanced(BROTLIDEC_LIBRARY)
+diff --git a/packaging/ios/fonts.conf b/packaging/ios/fonts.conf
+new file mode 100644
+index 0000000..43b21e1
+--- /dev/null
++++ b/packaging/ios/fonts.conf
+@@ -0,0 +1,9 @@
++<?xml version="1.0"?>
++<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
++<fontconfig>
++  <!-- Read system fonts; user fonts and caches remain in writable sandbox paths. -->
++  <dir>/System/Library/Fonts</dir>
++  <dir prefix="xdg">fonts</dir>
++  <cachedir prefix="xdg">fontconfig</cachedir>
++  <config><rescan><int>0</int></rescan></config>
++</fontconfig>
+diff --git a/plugins/tools/basictools/basictools.qrc b/plugins/tools/basictools/basictools.qrc
+new file mode 100644
+index 0000000..d714351
+--- /dev/null
++++ b/plugins/tools/basictools/basictools.qrc
+@@ -0,0 +1,19 @@
++<!DOCTYPE RCC>
++<!--
++  SPDX-FileCopyrightText: none
++  SPDX-License-Identifier: CC0-1.0
++-->
++<RCC version="1.0">
++    <qresource>
++        <file>tool_fill_cursor.svg</file>
++        <file>tool_ellipse_cursor.svg</file>
++        <file>tool_gradient_cursor.svg</file>
++        <file>tool_line_cursor.svg</file>
++        <file>tool_rectangle_cursor.svg</file>
++        <file>tool_fill_eraser_cursor.svg</file>
++        <file>tool_ellipse_eraser_cursor.svg</file>
++        <file>tool_gradient_eraser_cursor.svg</file>
++        <file>tool_line_eraser_cursor.svg</file>
++        <file>tool_rectangle_eraser_cursor.svg</file>
++    </qresource>
++</RCC>

@@ -1,0 +1,86 @@
+2026-09-24 historical build snapshot (current popup repair recorded separately below)
+Application: Krita 6.1.0-prealpha / iPadOS 17+ / arm64
+Source: 3a9b5ef03f8312b6f630fc5d475e1692598e8719 + patches/ios/krita-ipados.patch
+Patch SHA256: 3d0dea2b869f9061959b97fa9ce3a06741e858db919fbcfca902845e67553062
+Production Krita plugin imports: 147 (plus Krita QML and Qt plugins)
+Validated static archives: 194
+Ninja app files / bytes: 1461 / 510195328
+Ninja locale files / bytes: 859 / 54076760
+IPA files / bytes: 1461 / 163312825
+IPA SHA256: 4ab24601de1996018ead2ae244745c146afc9152011a919b52067ef88727edde
+IPA ZIP CRC, plist, executable mode and per-file content checks: PASS
+App architecture, platform, unsigned state, system dependencies and default bundles: PASS
+Required static qrc initializers and source sentinels: 14 / 14 PASS
+zh_CN / zh_TW Krita and KF6 translation catalogs in app bundle: PASS
+Xcode project: .build/krita-ios-xcode/krita.xcodeproj
+Xcode signed Release app files / bytes: 607 / 204742247
+Xcode Release flags: -O3 / NDEBUG
+Xcode Release ARM64 device build, signing and same app gate: PASS
+Xcode Release CDHash: 34c0633b9170c88946e9c311550b205e40819021
+Device startup, resource database, default bundles, main window and second launch: USER VERIFIED
+New-document failures: UIKit run-loop hang, selector NaN and color-history null document fixed
+Signed Debug Pencil stress observation: 180 seconds, exit code 0, abnormal partial-touch cancellation exercised, no new system crash log
+Signed Release application install and launch: PASS
+Release canvas lag and intermittent crash: USER TESTED; APPEARS RESOLVED
+Files-visible sandbox save: BUILT; Documents path and non-modal direct .kra naming implemented; DEVICE TEST PENDING
+Pencil double-tap current-brush/eraser toggle, Pencil Pro squeeze popup palette and iOS touch-binding removal: RELEASE BUILT AND INSTALLED; DEVICE BEHAVIOR TEST PENDING
+Text-mode input-method switching, non-text focus/touch hide guard and implicit layer-edit prevention: RELEASE BUILT AND INSTALLED; DEVICE BEHAVIOR TEST PENDING
+Krita/KF6 localization packaging and iOS locale loading: BUILT; DEVICE TEST PENDING
+Latest input/language Xcode Debug scheme build: BUILD SUCCEEDED
+Latest signed Debug app files / bytes: 1466 / 492948588
+Latest signed Debug locale files / bytes: 859 / 54076760
+Latest signed Debug executable SHA256: f8b2581594272d0231782c48e037b2e33198defefd9e4d511796c38bcf1cbe26
+Latest signed Debug ARM64/device/signed/system-dependencies/default-bundles/qrc/locales app gate: PASS
+Latest signed Debug identity: org.example.krita / Team <personal-team-id> / iOS Team Provisioning Profile: org.example.krita
+Latest signed Debug strict host trust check: CSSMERR_TP_NOT_TRUSTED; device accepted installation and launch
+Initial input build launch: FAILED; inherited didMoveToWindow was exchanged on UIView and crashed UIKit keyboard views
+QUIView-local method exchange fix: BUILD, SIGN, INSTALL AND LAUNCH PASS; PID 3587; no new crash report after 15 seconds
+Latest Release input/eraser app files / bytes: 1466 / 259060860
+Latest Release executable SHA256: e9a958e72277b16ca1136efa3e7aba07367d47f318210868493e5a3c507fe837
+Latest Release flags: -O3 / NDEBUG
+Latest Release input/eraser build, signing, app gate, installation and launch: PASS; PID 3705; no new crash report after 15 seconds
+Post-Release system crash-log query: unavailable because CoreDeviceService timed out after the test
+The device evidence and repairs are recorded in new-document-runloop-hang-2026-09-24.md, canvas-touch-crash-and-performance-2026-09-24.md and files-save-sandbox-2026-09-24.md.
+
+2026-09-26 popup and native picker repair
+Current patch bytes / SHA256: 139046 / 1ad0a51dd856c8f6e813910fe47404f1669cb08baee1a1af3304b53b0989ac24
+Host Qt regression of production callbacks: PASS (native responder and document saving are test doubles)
+Async confirmation, busy-image wait, cancel/discard/save, failures, edits during saving and view lifetime: PASS
+Native picker inputView protection, current text focus and coalesced hide: PASS
+Xcode Release ARM64 device build: BUILD SUCCEEDED
+Signed Release app files / bytes: 1466 / 259078924
+Signed Release executable SHA256: 3e1ebfd81498862dfa856cd2aa79f572979d656e435ed2a968b67ecba1d93441
+Signed Release app gate: PASS; arm64/device/signed/system dependencies/4 bundles/14 qrc/locales
+Signed Release identity: org.example.krita / Team <personal-team-id>
+Signed IPA files / bytes: 1466 / 118795889
+Signed IPA SHA256: 9712a086f57a785c0973995c705cb72362d9a8eeb42ee509a272ff98eaac789c
+Signed IPA ZIP CRC, plist, executable mode and per-file content checks: PASS
+iPad installation: PASS
+iPad launch: PASS; PID 6648
+Process check at 23:42:58: RUNNING
+Recent Krita system crash-log query at 23:43:03: 0 files for 2026-09-25/26
+Physical touch behavior for close confirmation and native picker: USER TEST PENDING
+Historical unsigned IPA remains the 2026-09-24 Debug snapshot without this repair.
+Detailed record: popup-and-picker-repair-2026-09-26.md
+
+
+2026-09-27 localization startup and language cache repair
+Late bundle catalog registration cached missing Krita catalogs: REPRODUCED AND FIXED
+KI18n static libintl probe omitted CoreFoundation/iconv: FIXED; HAVE_NL_MSG_CAT_CNTR=1
+Target KI18n cache-invalidation symbol reference: PASS
+Real host KI18n regression: PASS; zh_CN/zh_TW/menu/settings/context/English/application recreation
+Device same-process localization samples: PASS; Simplified, Traditional and English each match shipped catalogs
+Incorrect Simplified sample returning Traditional: REJECTED by new report gate
+Signed Release build, arm64 device/signature/system dependencies/4 bundles/14 qrc/catalog gate: PASS
+Signed Release app files / bytes: 1466 / 259079020
+Signed Release executable SHA256: 4bec67f33dd3437c41093b840b16dfe350f41c2c84757eec97b2f14c5a96bfd9
+Signed IPA bytes / SHA256: 118793585 / 5b5b03eb0789465166a446df473a9df8714122f842356d71ed5047a34d633185
+Current Krita patch bytes / SHA256: 142620 / b73335162ee2e785a2d9a51364fbea3df3a0a3410743157c5e348f5c734bd826
+KI18n patch bytes / SHA256: 964 / 6b3dc485e36b2c7d6bb430ddcc7241bc3f512f5dff22a03d6235e53e7ee0cd0a
+Signature identity: org.example.krita / Team <personal-team-id>
+Signed IPA CRC/plist/executable-mode/per-file-content validation: PASS
+Device install: PASS; diagnostic launch PID 6697; normal launch PID 6698
+Normal-launch process recheck: RUNNING; PID 6698
+Selected UI language: zh_TW; user preference not changed
+Complete screen/layout and manual restart/language-selection behavior: USER TEST PENDING
+No staging or commits. Details: localization-repair-2026-09-27.md

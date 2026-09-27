@@ -1,0 +1,21 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5b08cfc..35aaad2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -448,7 +448,15 @@ endif ()
+ # Compiles the source code, runs the program and sets ${VAR} to 1 if the
+ # return value is equal to ${RESULT}.
+ macro(check_run_result SRC RESULT VAR)
+-if (NOT ANDROID)
++if (IOS)
++  # Darwin arm64 uses IEEE doubles and supports %Lg; device executables cannot
++  # be run during cross configuration. Check char signedness with the compiler.
++  if ("${VAR}" STREQUAL "__CHAR_UNSIGNED__")
++    check_c_source_compiles("#include <limits.h>\n_Static_assert(CHAR_MIN == 0, \"unsigned char required\"); int main(void) { return 0; }" ${VAR})
++  else()
++    set(${VAR} 1)
++  endif()
++elseif (NOT ANDROID)
+   set(SRC_FILE ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeTmp/src.c)
+   file(WRITE ${SRC_FILE} "${SRC}")
+   try_run(RUN_RESULT COMPILE_RESULT ${CMAKE_BINARY_DIR} ${SRC_FILE}
